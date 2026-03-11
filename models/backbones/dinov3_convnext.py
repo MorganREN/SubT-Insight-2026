@@ -33,9 +33,6 @@ def _convert_dinov3_to_timm(dinov3_state_dict: dict, features_only: bool = True)
         stages.X.Y.norm.*                  → stages.X.blocks.Y.norm.*
         stages.X.Y.gamma                   → stages.X.blocks.Y.gamma
         norm.* / norms.*                   → (跳过, 属于分类头)
-
-    注意: features_only=True 时, timm 将顶层的 '.' 替换为 '_',
-          例如 'stem.0' → 'stem_0', 'stages.0' → 'stages_0'
     """
     timm_state_dict = {}
     skipped = []
@@ -118,7 +115,7 @@ def _convert_dinov3_to_timm(dinov3_state_dict: dict, features_only: bool = True)
 
 
 def convert_dinov3_to_timm(dinov3_state_dict: dict, features_only: bool = True) -> dict:
-    """公开的权重 key 映射函数（兼容原 backbone.py 接口）。"""
+    """公开的权重 key 映射函数。"""
     return _convert_dinov3_to_timm(dinov3_state_dict, features_only=features_only)
 
 
@@ -126,13 +123,7 @@ def load_dinov3_convnext_tiny(
     weight_path: str = "dinov3_convnext_tiny_pretrain_lvd1689m-21b726bb.pth",
     features_only: bool = True,
 ) -> nn.Module:
-    """
-    公开的模型加载函数（兼容原 backbone.py 接口）。
-
-    Args:
-        weight_path:   DINOv3 官方权重路径
-        features_only: 是否仅返回特征提取部分 (去掉分类头)
-    """
+    """公开的模型加载函数。"""
     model = timm.create_model(
         "convnext_tiny",
         pretrained=False,
@@ -183,7 +174,7 @@ class DINOv3ConvNeXt(nn.Module):
     def __init__(
         self,
         weight_path: str = None,
-        frozen_stages: int = 0,
+        frozen_stages: int = -1,
     ):
         super().__init__()
 
@@ -206,7 +197,7 @@ class DINOv3ConvNeXt(nn.Module):
     def _load_pretrained(self, weight_path: str):
         """加载并映射 DINOv3 预训练权重。"""
         checkpoint = torch.load(weight_path, map_location="cpu")
-        timm_weights = convert_dinov3_to_timm(checkpoint, features_only=True)
+        timm_weights = _convert_dinov3_to_timm(checkpoint, features_only=True)
 
         missing, unexpected = self.backbone.load_state_dict(timm_weights, strict=False)
         if missing:
