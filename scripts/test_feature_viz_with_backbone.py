@@ -56,7 +56,6 @@ def main():
     args = parse_args()
     logger.info("开始加载模型与图像...")
 
-    # 使用 DINOv3ConvNeXt 类而不是 load_dinov3_convnext_tiny 函数
     model = DINOv3ConvNeXt(weight_path=args.weight_path, frozen_stages=args.frozen_stages)
     model.eval()
 
