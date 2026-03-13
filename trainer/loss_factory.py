@@ -22,7 +22,7 @@ def build_loss(cfg: TrainConfig, class_weights=None, device=None):
         "dice+focal": (["dice", "focal"], [1.0, 1.0]),
     }
     losses, weights = loss_table[cfg.loss_name]
-    return CombinedLoss(
+    criterion = CombinedLoss(
         losses=losses,
         weights=weights,
         num_classes=cfg.num_classes,
@@ -30,3 +30,6 @@ def build_loss(cfg: TrainConfig, class_weights=None, device=None):
         dice_kwargs=dice_kwargs,
         focal_kwargs=focal_kwargs,
     )
+    if device is not None:
+        criterion = criterion.to(device)
+    return criterion
