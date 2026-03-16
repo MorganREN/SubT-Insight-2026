@@ -7,7 +7,7 @@ from dataload import CLASS_NAMES, NUM_CLASSES
 
 @dataclass
 class TrainConfig:
-    data_root: str = "dataset/aug_data1"
+    data_root: str = "dataset/tongji_data"
     output_dir: str = "outputs/train_run"
     device: str = "auto"
     resume: str = ""

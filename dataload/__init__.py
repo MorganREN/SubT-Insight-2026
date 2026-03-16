@@ -8,7 +8,7 @@ dataload/
     TunnelDefectDataset           PyTorch Dataset（支持多数据集根目录合并）
     SegmentationDataLoaderFactory DataLoader 工厂类
     build_dataloaders             便捷工厂函数，一行获取所有 split 的 DataLoader
-    NUM_CLASSES                   类别数量（5）
+    NUM_CLASSES                   类别数量（7）
     CLASS_NAMES                   类别名称元组
     CLASS_COLORS                  类别可视化颜色元组
 

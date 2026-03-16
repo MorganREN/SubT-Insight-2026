@@ -14,17 +14,18 @@ train.py
 
 from __future__ import annotations
 
+from dataload import NUM_CLASSES
 from trainer import SegmentationTrainer, TrainConfig
 
 
 RUN = TrainConfig(
-    data_root="dataset/aug_data1",
+    data_root="dataset/tongji_data",
     output_dir="outputs/train_run",
     device="auto",
     resume="",
     dry_run=False,
     seed=42,
-    num_classes=5,
+    num_classes=NUM_CLASSES,
     head_type="mlp",          # mlp / uper
     frozen_stages=-1,
     input_size=384,

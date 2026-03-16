@@ -8,13 +8,15 @@ dataload/dataset.py
         img_dir/{split}/{name}.jpg      ← RGB 图像
         ann_dir/{split}/{name}.png      ← 灰度掩码（像素值 = 类别 ID）
 
-类别映射（与 aug_data1 README 一致）
+类别映射（与 tongji_data 一致）
 -------------------------------------
     0  background（背景）
-    1  cracks-MKjm（裂缝型 A）
-    2  cracks-MKjm（裂缝型 B）
-    3  leakage    （渗漏）
-    4  spalling   （剥落）
+    1  crack（裂缝）
+    2  leakage_b（渗漏 B）
+    3  leakage_w（渗漏 W）
+    4  leakage_g（渗漏 G）
+    5  lining_falling_off（衬砌脱落）
+    6  segment_damage（管片损伤）
 """
 
 from __future__ import annotations
@@ -33,19 +35,23 @@ from loguru import logger
 #: 类别名称（索引即类别 ID）
 CLASS_NAMES: Tuple[str, ...] = (
     "background",
-    "crack_a",
-    "crack_b",
-    "leakage",
-    "spalling",
+    "crack",
+    "leakage_b",
+    "leakage_w",
+    "leakage_g",
+    "lining_falling_off",
+    "segment_damage",
 )
 
 #: 可视化 RGB 颜色（每类一个颜色）
 CLASS_COLORS: Tuple[Tuple[int, int, int], ...] = (
     (0,   0,   0),    # 0 background  黑
-    (255, 0,   0),    # 1 crack_a     红
-    (0,   255, 0),    # 2 crack_b     绿
-    (0,   0,   255),  # 3 leakage     蓝
-    (0,   255, 255),  # 4 spalling    青
+    (255, 0,   0),    # 1 crack       红
+    (255, 128, 0),    # 2 leakage_b   橙
+    (0,   0,   255),  # 3 leakage_w   蓝
+    (0,   255, 255),  # 4 leakage_g   青
+    (255, 255, 0),    # 5 lining_off  黄
+    (255, 0,   255),  # 6 seg_damage  洋红
 )
 
 #: 类别数量
@@ -107,7 +113,7 @@ class TunnelDefectDataset(Dataset):
     Attributes
     ----------
     num_classes : int
-        类别总数（5）。
+        类别总数（7）。
     class_names : tuple[str]
         各类别名称。
     class_colors : tuple[tuple[int,int,int]]
@@ -178,7 +184,7 @@ class TunnelDefectDataset(Dataset):
         mask = np.array(Image.open(ann_path).convert("L"), dtype=np.uint8)
 
         # ── 安全检查：将越界且非 ignore_index 的像素置为背景（0）──
-        # 注意：不能用 clip(0, num_classes-1)，那会把 ignore_index=255 压成类别 4
+        # 注意：不能用 clip(0, num_classes-1)，那会把 ignore_index=255 压成最后一类
         out_of_range = (mask >= self.num_classes) & (mask != self.ignore_index)
         if out_of_range.any():
             mask = mask.copy()

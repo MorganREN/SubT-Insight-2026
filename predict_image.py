@@ -18,7 +18,7 @@ from predictor import ImagePredictor, PredictConfig
 
 
 RUN = PredictConfig(
-    image="dataset/aug_data1/img_dir/train/1_1_036_31_jpg.rf.a33c41b4952f8685c269f91f8f3d47fe.jpg",
+    image="dataset/tongji_data/img_dir/valid/C0059.jpg",
     mask="",
     ckpt="",            # 留空 = 自动选 outputs/ 下最新 checkpoint
     device="auto",      # auto / cuda / cpu
