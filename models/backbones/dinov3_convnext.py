@@ -23,16 +23,6 @@ from loguru import logger
 def _convert_dinov3_to_timm(dinov3_state_dict: dict, features_only: bool = True) -> dict:
     """
     将 DINOv3 ConvNeXt-Tiny 官方预训练权重的 key 映射为 timm 格式。
-
-    映射规则:
-        downsample_layers.0.{0,1}.*        → stem.{0,1}.*
-        downsample_layers.{1,2,3}.{0,1}.*  → stages.{1,2,3}.downsample.{0,1}.*
-        stages.X.Y.dwconv.*                → stages.X.blocks.Y.conv_dw.*
-        stages.X.Y.pwconv1.*               → stages.X.blocks.Y.mlp.fc1.*
-        stages.X.Y.pwconv2.*               → stages.X.blocks.Y.mlp.fc2.*
-        stages.X.Y.norm.*                  → stages.X.blocks.Y.norm.*
-        stages.X.Y.gamma                   → stages.X.blocks.Y.gamma
-        norm.* / norms.*                   → (跳过, 属于分类头)
     """
     timm_state_dict = {}
     skipped = []
@@ -148,25 +138,7 @@ def load_dinov3_convnext_tiny(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class DINOv3ConvNeXt(nn.Module):
-    """
-    DINOv3 ConvNeXt-Tiny Backbone。
-
-    基于 timm 的 convnext_tiny，加载 DINOv3 预训练权重。
-    输出 4 个 stage 的多尺度特征列表，可直接接入 UPerHead / MLPHead。
-
-    Args:
-        weight_path:    DINOv3 官方权重路径。None 表示不加载预训练。
-        frozen_stages:  冻结前 N 个 stage（0=不冻结, -1=全冻结）。
-                        例如 frozen_stages=2 会冻结 stem + stage0 + stage1。
-        out_channels:   各 stage 输出通道数 (只读属性，由模型结构决定)
-
-    前向输出:
-        List[Tensor], 长度 4:
-            [0]: [B,  96, H/4,  W/4]
-            [1]: [B, 192, H/8,  W/8]
-            [2]: [B, 384, H/16, W/16]
-            [3]: [B, 768, H/32, W/32]
-    """
+    """DINOv3 ConvNeXt-Tiny Backbone 封装。"""
 
     # ConvNeXt-Tiny 各 stage 输出通道数
     OUT_CHANNELS = (96, 192, 384, 768)
