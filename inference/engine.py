@@ -16,6 +16,7 @@ from utils.segmentor_loader import (
     build_segmentor_from_checkpoint,
     get_class_names_from_checkpoint,
     get_input_size_from_checkpoint,
+    is_quantized_checkpoint,
     resolve_checkpoint_path,
 )
 from utils.segmentation_vis import blend_overlay, colorize_mask, denormalize_image_tensor
@@ -112,7 +113,11 @@ class SegmentationInferencer:
         logger.info(f"使用 checkpoint: {ckpt_path}")
 
         device = resolve_device(cfg.device, allow_mps=True, warn_mps_on_auto=True)
-        ckpt = load_checkpoint_compat(ckpt_path, map_location=device)
+        ckpt = load_checkpoint_compat(ckpt_path, map_location="cpu")
+        if is_quantized_checkpoint(ckpt) and device.type != "cpu":
+            logger.warning("检测到量化 checkpoint，infer 自动切换到 CPU 推理。")
+            device = torch.device("cpu")
+
         input_size = get_input_size_from_checkpoint(ckpt, default=512)
         class_names = get_class_names_from_checkpoint(ckpt, default=CLASS_NAMES)
 
