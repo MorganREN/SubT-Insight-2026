@@ -18,6 +18,7 @@ class TrainConfig:
     class_names: tuple[str, ...] = CLASS_NAMES
     backbone_weight_path: str | None = "dinov3_convnext_tiny_pretrain_lvd1689m-21b726bb.pth"
     head_type: str = "mlp"
+    head_channels: int = 512
     frozen_stages: int = -1
 
     input_size: int = 384
