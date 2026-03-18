@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class MLPHead(nn.Module):
-    def __init__(self, in_channels_list, embed_dim=256, num_classes=5):
+    def __init__(self, in_channels_list, embed_dim=256, num_classes=7):
         """
         in_channels_list: ConvNeXt 4个stage的输出通道数，例如 [96, 192, 384, 768] (Tiny的默认配置)
         embed_dim: 统一降维后的通道数

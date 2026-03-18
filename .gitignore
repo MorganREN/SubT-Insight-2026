@@ -210,5 +210,6 @@ __marimo__/
 aug_data_extra/
 
 .DS_Store
-*.png
 dataset/
+outputs/
+*.ipynb

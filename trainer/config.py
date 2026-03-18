@@ -7,7 +7,7 @@ from dataload import CLASS_NAMES, NUM_CLASSES
 
 @dataclass
 class TrainConfig:
-    data_root: str = "dataset/aug_data1"
+    data_root: str = "dataset/tongji_data"
     output_dir: str = "outputs/train_run"
     device: str = "auto"
     resume: str = ""
@@ -18,6 +18,7 @@ class TrainConfig:
     class_names: tuple[str, ...] = CLASS_NAMES
     backbone_weight_path: str | None = "dinov3_convnext_tiny_pretrain_lvd1689m-21b726bb.pth"
     head_type: str = "mlp"
+    head_channels: int = 512
     frozen_stages: int = -1
 
     input_size: int = 384

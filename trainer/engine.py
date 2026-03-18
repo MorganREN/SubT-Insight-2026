@@ -168,6 +168,7 @@ class SegmentationTrainer:
             num_classes=cfg.num_classes,
             backbone_weight_path=cfg.backbone_weight_path,
             head_type=cfg.head_type,
+            head_channels=cfg.head_channels,
             frozen_stages=cfg.frozen_stages,
         ).to(device)
 

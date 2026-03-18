@@ -30,7 +30,7 @@ class PyramidPoolingModule(nn.Module):
         return self.bottleneck(out)
 
 class UPerHead(nn.Module):
-    def __init__(self, in_channels_list, pool_scales=[1, 2, 4, 8], channels=512, num_classes=5):
+    def __init__(self, in_channels_list, pool_scales=[1, 2, 4, 8], channels=512, num_classes=7):
         super().__init__()
         # 最顶层特征经过 PPM 模块
         self.ppm = PyramidPoolingModule(in_channels_list[-1], channels, pool_scales)

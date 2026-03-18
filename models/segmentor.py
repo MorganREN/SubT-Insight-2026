@@ -29,7 +29,7 @@ class TunnelSegmentor(nn.Module):
 
     def __init__(
         self,
-        num_classes: int = 5,
+        num_classes: int = 7,
         backbone_weight_path: str = None,
         head_type: str = "mlp",
         frozen_stages: int = 0,
@@ -115,7 +115,7 @@ if __name__ == "__main__":
     logger.info("=" * 60)
 
     WEIGHT_PATH = "dinov3_convnext_tiny_pretrain_lvd1689m-21b726bb.pth"
-    NUM_CLASSES = 5
+    NUM_CLASSES = 7
 
     logger.info("\n── UPerHead 测试 ──")
     model_uper = TunnelSegmentor(

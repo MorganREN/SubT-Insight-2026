@@ -6,7 +6,7 @@ from dataclasses import dataclass
 @dataclass
 class InferConfig:
     ckpt: str = ""
-    data_root: str = "dataset/aug_data1"
+    data_root: str = "dataset/tongji_data"
     split: str = "val"
     device: str = "auto"
     batch_size: int = 4

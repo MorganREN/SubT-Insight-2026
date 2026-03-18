@@ -25,6 +25,7 @@ from .segmentation_vis import (
     denormalize_image_tensor,
     normalize_image,
 )
+from .quantizer import ModelQuantizer, QuantizerConfig
 
 __all__ = [
     # feature viz
@@ -54,4 +55,7 @@ __all__ = [
     "denormalize_image_tensor",
     "colorize_mask",
     "blend_overlay",
+    # quantization
+    "ModelQuantizer",
+    "QuantizerConfig",
 ]

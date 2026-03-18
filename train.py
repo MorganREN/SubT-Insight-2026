@@ -14,26 +14,28 @@ train.py
 
 from __future__ import annotations
 
+from dataload import NUM_CLASSES
 from trainer import SegmentationTrainer, TrainConfig
 
 
 RUN = TrainConfig(
-    data_root="dataset/aug_data1",
+    data_root="dataset/tongji_data",
     output_dir="outputs/train_run",
     device="auto",
     resume="",
     dry_run=False,
     seed=42,
-    num_classes=5,
-    head_type="mlp",          # mlp / uper
+    num_classes=NUM_CLASSES,
+    head_type="uper",          # mlp / uper
+    head_channels=48,           # UPer 通道宽度（48≈0.74M 参数）
     frozen_stages=-1,
     input_size=384,
     batch_size=4,
     num_workers=2,
     loss_name="dice+focal",
     use_class_weights=False,
-    epochs=100,
-    base_lr=1e-3,
+    epochs=80,
+    base_lr=5e-4,
     backbone_lr_mult=0.1,
     weight_decay=1e-2,
     warmup_epochs=1,

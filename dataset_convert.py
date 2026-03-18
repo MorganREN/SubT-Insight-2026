@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import io
 import json
+import math
 import random
 import shutil
 from dataclasses import dataclass
@@ -21,6 +22,7 @@ SPLIT_RATIO = (0.70, 0.15, 0.15)
 RANDOM_SEED = 42
 OVERLAY_INTENSITY = 115
 CLEAR_OUTPUT = True
+DRAW_OVERLAY_LEGEND = True
 
 
 CLASS_DEFECTS = {
@@ -238,6 +240,41 @@ def generate_mask_overlay(image_arr: np.ndarray, mask_arr: np.ndarray) -> np.nda
 	return overlay.astype(np.uint8)
 
 
+def add_overlay_legend(overlay_arr: np.ndarray) -> np.ndarray:
+	"""在 overlay 底部追加颜色图例：颜色块 + 病害类别名。"""
+	items = [(cls_id, CLASS_DEFECTS[cls_id], CLASS_COLORS_RGB[cls_id]) for cls_id in sorted(CLASS_DEFECTS.keys())]
+	if not items:
+		return overlay_arr
+
+	overlay_img = Image.fromarray(overlay_arr)
+	w, h = overlay_img.size
+
+	cols = 3
+	rows = math.ceil(len(items) / cols)
+	pad = 10
+	row_h = 26
+	swatch = 16
+	legend_h = pad * 2 + rows * row_h
+
+	canvas = Image.new("RGB", (w, h + legend_h), (245, 245, 245))
+	canvas.paste(overlay_img, (0, 0))
+
+	draw = ImageDraw.Draw(canvas)
+	draw.line([(0, h), (w, h)], fill=(200, 200, 200), width=1)
+
+	col_w = max(1, w // cols)
+	for idx, (cls_id, class_name, color) in enumerate(items):
+		row = idx // cols
+		col = idx % cols
+
+		x0 = col * col_w + pad
+		y0 = h + pad + row * row_h
+		draw.rectangle([x0, y0, x0 + swatch, y0 + swatch], fill=color, outline=(0, 0, 0), width=1)
+		draw.text((x0 + swatch + 6, y0 - 1), f"{cls_id}: {class_name}", fill=(0, 0, 0))
+
+	return np.array(canvas, dtype=np.uint8)
+
+
 def generate_segmented(image_arr: np.ndarray, mask_arr: np.ndarray) -> np.ndarray:
 	segmented = np.zeros_like(image_arr, dtype=np.uint8)
 	hit = mask_arr > 0
@@ -289,6 +326,8 @@ def process_split(samples: list[Sample], split: str, dirs: dict[str, dict[str, P
 
 		image_arr = np.array(image, dtype=np.uint8)
 		overlay = generate_mask_overlay(image_arr, mask)
+		if DRAW_OVERLAY_LEGEND:
+			overlay = add_overlay_legend(overlay)
 		segmented = generate_segmented(image_arr, mask)
 
 		stem = sample.stem

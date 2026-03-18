@@ -70,6 +70,15 @@ def load_checkpoint_compat(path: str | Path, map_location: torch.device | str | 
     except pickle.UnpicklingError as e:
         if "Weights only load failed" not in str(e):
             raise
+
+        # Avoid known crashes when loading pickled quantized nn.Module objects
+        # with weights_only=False under some PyTorch builds.
+        if "quant" in ckpt_path.as_posix().lower():
+            raise RuntimeError(
+                "检测到可能为旧版量化模型文件，已阻止 weights_only=False 反序列化以避免崩溃。\n"
+                "请重新运行 quantize.py 生成新版量化 checkpoint（state_dict 格式）。"
+            ) from e
+
         logger.warning(
             "检测到 PyTorch>=2.6 的 weights_only 限制，"
             "回退到 weights_only=False 重新加载（仅对受信任 checkpoint 使用）"
