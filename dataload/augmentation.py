@@ -163,7 +163,7 @@ class SegmentationAugmentation:
                 min_width=input_size,
                 border_mode=0,          # cv2.BORDER_CONSTANT
                 value=0,                # image 填 0（黑色）
-                mask_value=0,           # mask 填 0（背景类）
+                mask_value=255,         # mask 填 ignore_index，padding 区域不参与评估
             ),
             A.Normalize(mean=_IMAGENET_MEAN, std=_IMAGENET_STD),
             ToTensorV2(),
