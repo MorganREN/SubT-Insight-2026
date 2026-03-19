@@ -22,9 +22,6 @@ class TunnelSegmentor(nn.Module):
 
         UPerHead 专用:
             pool_scales:      PPM 模块的池化尺度
-
-        MLPHead 专用:
-            embed_dim:        统一嵌入维度
     """
 
     def __init__(
@@ -35,7 +32,6 @@ class TunnelSegmentor(nn.Module):
         frozen_stages: int = 0,
         head_channels: int = 512,
         pool_scales: list = None,   # None → UPerHead 默认 [1,2,4,8]
-        embed_dim: int = 256,
     ):
         super().__init__()
 
@@ -61,7 +57,7 @@ class TunnelSegmentor(nn.Module):
         elif self.head_type == "mlp":
             self.decode_head = MLPHead(
                 in_channels_list=in_channels_list,
-                embed_dim=embed_dim,
+                embed_dim=head_channels,
                 num_classes=num_classes,
             )
         else:

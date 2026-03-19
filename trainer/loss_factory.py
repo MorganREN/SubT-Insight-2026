@@ -19,9 +19,14 @@ def build_loss(cfg: TrainConfig, class_weights=None, device=None):
         "focal": (["focal"], [1.0]),
         "ce+dice": (["ce", "dice"], [1.0, 1.0]),
         "ce+focal": (["ce", "focal"], [1.0, 1.0]),
-        "dice+focal": (["dice", "focal"], [1.0, 1.0]),
+        "dice+focal": (["dice", "focal"], [2.0, 1.0]),
     }
-    losses, weights = loss_table[cfg.loss_name]
+    losses, default_weights = loss_table[cfg.loss_name]
+    weights = list(cfg.loss_weights) if cfg.loss_weights is not None else default_weights
+    assert len(weights) == len(losses), (
+        f"loss_weights 长度 ({len(weights)}) 与 loss_name='{cfg.loss_name}' "
+        f"所含损失数 ({len(losses)}) 不一致"
+    )
     criterion = CombinedLoss(
         losses=losses,
         weights=weights,

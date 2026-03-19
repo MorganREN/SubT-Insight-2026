@@ -177,7 +177,7 @@ class SegmentationTrainer:
 
         optimizer = build_optimizer(
             model,
-            optimizer_type="adamw",
+            optimizer_type=cfg.optimizer_type,
             base_lr=cfg.base_lr,
             backbone_lr_mult=cfg.backbone_lr_mult,
             weight_decay=cfg.weight_decay,
