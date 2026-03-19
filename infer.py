@@ -20,7 +20,7 @@ from inference import InferConfig, SegmentationInferencer
 RUN = InferConfig(
     ckpt="",                 # 留空 = 自动选择 outputs/ 下最新 checkpoint
     data_root="dataset/tongji_data",
-    split="val",            # val / test
+    split="test",            # val / test
     device="auto",          # auto / cuda / cpu / mps
     batch_size=4,
     num_workers=2,
