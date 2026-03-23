@@ -212,4 +212,9 @@ aug_data_extra/
 .DS_Store
 dataset/
 outputs/
+outputs_old/
 *.ipynb
+*.pyh
+*.log
+*.json
+outputs_*/

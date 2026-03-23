@@ -285,7 +285,7 @@ class CombinedLoss(nn.Module):
         )
 
     def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
-        total = torch.tensor(0.0, device=logits.device)
+        total = torch.zeros((), dtype=torch.float32, device=logits.device)  # float32 累加器
         self.last_components.clear()
 
         for name, weight in zip(self.loss_names, self.loss_weights):
