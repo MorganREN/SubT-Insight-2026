@@ -212,6 +212,25 @@ class DINOv3ConvNeXt(nn.Module):
             f"({frozen_params}/{total_params} 参数被冻结)"
         )
 
+    def set_frozen_stages(self, frozen_stages: int):
+        """
+        动态更新冻结阶段数。
+
+        先解冻全部参数，再按新的 frozen_stages 重新冻结，
+        以确保状态与 __init__ 时的行为一致。
+
+        frozen_stages = -1: 冻结全部
+        frozen_stages = 0:  不冻结
+        frozen_stages = N:  冻结 stem + stage_0 ~ stage_{N-1}
+        """
+        # 先全部解冻
+        for param in self.backbone.parameters():
+            param.requires_grad = True
+
+        self.frozen_stages = frozen_stages
+        if frozen_stages != 0:
+            self._freeze_stages(frozen_stages)
+
     @property
     def out_channels(self):
         """各 stage 输出通道数的列表。"""
