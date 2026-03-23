@@ -58,6 +58,8 @@ class SegmentationDataLoaderFactory:
         persistent_workers: bool = True,
         aug_kwargs: Optional[dict] = None,
         splits: Optional[List[str]] = None,
+        use_skeleton: bool = False,
+        skel_dir: Optional[str] = None,
     ):
         if isinstance(data_roots, str):
             data_roots = [data_roots]
@@ -67,6 +69,8 @@ class SegmentationDataLoaderFactory:
         self.input_size  = input_size
         self.aug_kwargs  = aug_kwargs or {}
         self.splits      = splits or ["train", "val", "test"]
+        self.use_skeleton = use_skeleton
+        self.skel_dir     = skel_dir
 
         # 自动检测 pin_memory
         if pin_memory is None:
@@ -88,10 +92,13 @@ class SegmentationDataLoaderFactory:
                 input_size=input_size,
                 **self.aug_kwargs,
             )
+            # 骨架掩码仅对 train split 启用
+            _skel = self.skel_dir if (use_skeleton and split == "train") else None
             ds = TunnelDefectDataset(
                 data_roots=self.data_roots,
                 split=split,
                 augmentation=aug,
+                skel_dir=_skel,
             )
             self.datasets[split] = ds
             self._loaders[split] = self._make_loader(ds, split)
@@ -165,6 +172,8 @@ def build_dataloaders(
     pin_memory: Optional[bool] = None,
     splits: Optional[List[str]] = None,
     aug_kwargs: Optional[dict] = None,
+    use_skeleton: bool = False,
+    skel_dir: Optional[str] = None,
 ) -> Dict[str, DataLoader]:
     """一行代码获取所有 split 的 DataLoader 字典。"""
     factory = SegmentationDataLoaderFactory(
@@ -175,5 +184,7 @@ def build_dataloaders(
         pin_memory=pin_memory,
         aug_kwargs=aug_kwargs,
         splits=splits or ["train", "val", "test"],
+        use_skeleton=use_skeleton,
+        skel_dir=skel_dir,
     )
     return {split: factory.get(split) for split in factory.splits}
