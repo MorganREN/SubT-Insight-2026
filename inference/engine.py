@@ -39,9 +39,10 @@ class SegmentationInferencer:
     @torch.no_grad()
     def _evaluate(model, loader, device: torch.device, class_names: tuple[str, ...]):
         evaluator = SegEvaluator(num_classes=len(class_names), class_names=class_names)
-        for images, masks in loader:
-            images = images.to(device, non_blocking=True)
-            masks = masks.to(device, non_blocking=True)
+        for batch in loader:
+            images = batch[0].to(device, non_blocking=True)
+            masks  = batch[1].to(device, non_blocking=True)
+            # TMDSSegmentor 在 eval 模式返回单张量，与 TunnelSegmentor 接口一致
             logits = model(images)
             evaluator.update(logits, masks)
 
@@ -64,7 +65,8 @@ class SegmentationInferencer:
         logger.info(f"开始保存可视化: {total} 张 → {vis_dir}")
 
         for idx in range(total):
-            image, gt_mask = dataset[idx]
+            sample = dataset[idx]
+            image, gt_mask = sample[0], sample[1]   # 兼容 2-tuple 和 3-tuple（含 skel_mask）
             image_b = image.unsqueeze(0).to(device)
             logits = model(image_b)
             pred_mask = logits.argmax(dim=1).squeeze(0).detach().cpu().numpy().astype(np.uint8)

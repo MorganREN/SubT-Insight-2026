@@ -28,6 +28,7 @@ from .visuals import (
     save_outputs_basic,
     save_outputs_with_gt,
 )
+from dataload import CLASS_COLORS as _DEFAULT_CLASS_COLORS
 
 
 class ImagePredictor:
@@ -110,6 +111,17 @@ class ImagePredictor:
             gt_overlay = blend_overlay(image_np, gt_color, alpha=0.45)
             error_overlay = build_error_overlay(image_np, pred, gt_mask)
 
+            metric = self._compute_single_image_metrics(
+                pred,
+                gt_mask,
+                num_classes=int(model_cfg.get("num_classes", NUM_CLASSES)),
+                class_names=class_names,
+            )
+            present_mask = np.bincount(
+                gt_mask[gt_mask != 255].ravel(),
+                minlength=int(model_cfg.get("num_classes", NUM_CLASSES)),
+            ).astype(bool)
+
             save_outputs_with_gt(
                 image_path=image_path,
                 out_dir=out_dir,
@@ -119,16 +131,13 @@ class ImagePredictor:
                 pred_color_mask=pred_color,
                 pred_overlay=pred_overlay,
                 error_overlay=error_overlay,
-            )
-
-            metric = self._compute_single_image_metrics(
-                pred,
-                gt_mask,
-                num_classes=int(model_cfg.get("num_classes", NUM_CLASSES)),
                 class_names=class_names,
+                class_colors=_DEFAULT_CLASS_COLORS,
+                per_class_iou=metric["IoU"],
+                present_mask=present_mask,
             )
             logger.info(
-                f"单图指标: IoU={metric['mIoU']*100:.2f}%  Accuracy={metric['aAcc']*100:.2f}%"
+                f"单图指标: mIoU={metric['mIoU']*100:.2f}%  Accuracy={metric['aAcc']*100:.2f}%"
             )
         else:
             save_outputs_basic(
@@ -137,6 +146,8 @@ class ImagePredictor:
                 image=image_np,
                 pred_color_mask=pred_color,
                 pred_overlay=pred_overlay,
+                class_names=class_names,
+                class_colors=_DEFAULT_CLASS_COLORS,
             )
             logger.warning("未找到对应 GT mask，跳过 IoU/Accuracy 计算（可在 RUN.mask 显式指定）")
 

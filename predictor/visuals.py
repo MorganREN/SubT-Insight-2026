@@ -31,6 +31,12 @@ def postprocess_mask(pred_mask: np.ndarray, original_hw: tuple[int, int]) -> np.
 
 def _get_title_font(font_size: int) -> ImageFont.ImageFont:
     candidates = [
+        # Linux
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+        "/usr/share/fonts/truetype/ubuntu/Ubuntu-R.ttf",
+        # macOS
         "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
         "/System/Library/Fonts/Supplemental/Arial.ttf",
         "/System/Library/Fonts/Supplemental/Helvetica.ttf",
@@ -107,12 +113,73 @@ def build_error_overlay(
     return np.clip(out, 0, 255).astype(np.uint8)
 
 
+def build_legend_bar(
+    class_names: tuple[str, ...],
+    class_colors: tuple[tuple[int, int, int], ...],
+    width: int,
+    per_class_iou: np.ndarray | None = None,
+    present_mask: np.ndarray | None = None,
+    items_per_row: int = 4,
+    row_h: int = 50,
+    swatch_size: int = 28,
+    font_size: int = 17,
+) -> np.ndarray:
+    """底部图例条：色块 + 类别名 + 每类 IoU（可选）。
+
+    Parameters
+    ----------
+    class_names / class_colors : 类别定义
+    width : 与上方面板等宽
+    per_class_iou : shape (num_classes,) float [0,1]，传入时显示 IoU
+    present_mask  : shape (num_classes,) bool，True 表示该类在 GT 中出现；
+                    absent 类显示 "N/A"
+    """
+    n = len(class_names)
+    n_rows = (n + items_per_row - 1) // items_per_row
+    pad_v = 8
+    legend_h = n_rows * row_h + pad_v * 2
+
+    canvas = Image.new("RGB", (width, legend_h), (245, 245, 245))
+    draw = ImageDraw.Draw(canvas)
+    font = _get_title_font(font_size)
+    item_w = width // items_per_row
+
+    for i, (name, color) in enumerate(zip(class_names, class_colors)):
+        row = i // items_per_row
+        col = i % items_per_row
+        x0 = col * item_w + 10
+        y0 = pad_v + row * row_h + (row_h - swatch_size) // 2
+
+        # 色块
+        draw.rectangle(
+            [x0, y0, x0 + swatch_size, y0 + swatch_size],
+            fill=color,
+            outline=(80, 80, 80),
+        )
+
+        # 文字
+        if per_class_iou is not None:
+            absent = present_mask is not None and not present_mask[i]
+            iou_str = "N/A" if absent else f"{per_class_iou[i] * 100:.1f}%"
+            label = f"{name}: {iou_str}"
+        else:
+            label = name
+
+        tx = x0 + swatch_size + 6
+        ty = pad_v + row * row_h + (row_h - font_size) // 2
+        draw.text((tx, ty), label, fill=(20, 20, 20), font=font)
+
+    return np.array(canvas, dtype=np.uint8)
+
+
 def save_outputs_basic(
     image_path: Path,
     out_dir: Path,
     image: np.ndarray,
     pred_color_mask: np.ndarray,
     pred_overlay: np.ndarray,
+    class_names: tuple[str, ...] | None = None,
+    class_colors: tuple[tuple[int, int, int], ...] | None = None,
 ):
     stem = image_path.stem
 
@@ -125,14 +192,7 @@ def save_outputs_basic(
 
     blank = _blank_like(image)
     panel = _build_panel_2x3(
-        images=[
-            image,
-            blank,
-            blank,
-            blank,
-            pred_overlay,
-            pred_color_mask,
-        ],
+        images=[image, blank, blank, blank, pred_overlay, pred_color_mask],
         titles=[
             "Original",
             "GT Overlay (N/A)",
@@ -142,6 +202,11 @@ def save_outputs_basic(
             "Pred Segmented",
         ],
     )
+
+    if class_names is not None and class_colors is not None:
+        legend = build_legend_bar(class_names, class_colors, width=panel.shape[1])
+        panel = np.concatenate([panel, legend], axis=0)
+
     Image.fromarray(panel).save(panel_path)
 
     logger.success(f"已保存 mask: {mask_path}")
@@ -158,31 +223,16 @@ def save_outputs_with_gt(
     pred_color_mask: np.ndarray,
     pred_overlay: np.ndarray,
     error_overlay: np.ndarray,
+    class_names: tuple[str, ...] | None = None,
+    class_colors: tuple[tuple[int, int, int], ...] | None = None,
+    per_class_iou: np.ndarray | None = None,
+    present_mask: np.ndarray | None = None,
 ):
     stem = image_path.stem
-
-    gt_mask_path = out_dir / f"{stem}_gt_mask.png"
-    gt_overlay_path = out_dir / f"{stem}_gt_overlay.png"
-    pred_mask_path = out_dir / f"{stem}_pred_mask.png"
-    pred_overlay_path = out_dir / f"{stem}_pred_overlay.png"
-    error_path = out_dir / f"{stem}_error_overlay.png"
     panel_path = out_dir / f"{stem}_panel.png"
 
-    Image.fromarray(gt_color_mask).save(gt_mask_path)
-    Image.fromarray(gt_overlay).save(gt_overlay_path)
-    Image.fromarray(pred_color_mask).save(pred_mask_path)
-    Image.fromarray(pred_overlay).save(pred_overlay_path)
-    Image.fromarray(error_overlay).save(error_path)
-
     panel = _build_panel_2x3(
-        images=[
-            image,
-            gt_overlay,
-            gt_color_mask,
-            error_overlay,
-            pred_overlay,
-            pred_color_mask,
-        ],
+        images=[image, gt_overlay, gt_color_mask, error_overlay, pred_overlay, pred_color_mask],
         titles=[
             "Original",
             "GT Overlay",
@@ -192,13 +242,18 @@ def save_outputs_with_gt(
             "Pred Segmented",
         ],
     )
-    Image.fromarray(panel).save(panel_path)
 
-    logger.success(f"已保存 GT mask: {gt_mask_path}")
-    logger.success(f"已保存 GT overlay: {gt_overlay_path}")
-    logger.success(f"已保存 Pred mask: {pred_mask_path}")
-    logger.success(f"已保存 Pred overlay: {pred_overlay_path}")
-    logger.success(f"已保存 Error overlay: {error_path}")
+    if class_names is not None and class_colors is not None:
+        legend = build_legend_bar(
+            class_names,
+            class_colors,
+            width=panel.shape[1],
+            per_class_iou=per_class_iou,
+            present_mask=present_mask,
+        )
+        panel = np.concatenate([panel, legend], axis=0)
+
+    Image.fromarray(panel).save(panel_path)
     logger.success(f"已保存 6联 panel: {panel_path}")
 
 
