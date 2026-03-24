@@ -83,8 +83,8 @@ TMDS_RUN = TrainConfig(
     # ── 路径 ──────────────────────────────────────────────────────────────────
     data_root            = "dataset/tongji_data",
     output_dir           = "outputs/tmds_run",
-    backbone_type        = "vit_s16plus",           # 骨干类型："convnext_tiny" | "vit_s16plus"
-    backbone_weight_path = "dinov3_vits16plus_pretrain_lvd1689m-4057cbaa.pth",
+    backbone_type        = "convnext_tiny",           # 骨干类型："convnext_tiny" | "vit_s16plus"
+    backbone_weight_path = "dinov3_convnext_tiny_pretrain_lvd1689m-21b726bb.pth",
 
     # ── 运行控制 ─────────────────────────────────────────────────────────────
     device  = "auto",
@@ -94,7 +94,7 @@ TMDS_RUN = TrainConfig(
 
     # ── 模型结构 ─────────────────────────────────────────────────────────────
     num_classes   = NUM_CLASSES,
-    head_channels = 256,          # TMDS 建议 256（MRM/DSA/CMIM 通道宽度）
+    head_channels = 128,          # TMDS 建议 256（MRM/DSA/CMIM 通道宽度）
     use_tmds      = True,         # ← 关键开关：使用 TMDSSegmentor
 
     # DSA 解码器超参数（通常无需调整）
@@ -109,7 +109,7 @@ TMDS_RUN = TrainConfig(
 
     # ── 三阶段训练（总 epoch = 20+40+40 = 100）───────────────────────────────
     # stage_epochs 三元组各对应一个阶段的 epoch 数
-    stage_epochs        = (20, 80, 80),
+    stage_epochs        = (20, 40, 40),
     # stage_frozen_stages：-1=全冻结, 2=冻结前两个stage, 1=仅冻结stem+stage0
     # Stage3 改为 frozen_stages=1（保持浅层骨干冻结）而非 0（全解冻），原因：
     #   解码器在 Stage1/2 学会了与半冻结骨干特征配合；全解冻+拓扑损失同时上线
@@ -146,4 +146,4 @@ def main(cfg: TrainConfig | None = None):
 
 
 if __name__ == "__main__":
-    main(RUN)
+    main(TMDS_RUN)

@@ -227,9 +227,14 @@ def save_outputs_with_gt(
     class_colors: tuple[tuple[int, int, int], ...] | None = None,
     per_class_iou: np.ndarray | None = None,
     present_mask: np.ndarray | None = None,
+    pred_raw_mask: np.ndarray | None = None,
 ):
     stem = image_path.stem
     panel_path = out_dir / f"{stem}_panel.png"
+
+    if pred_raw_mask is not None:
+        Image.fromarray(pred_raw_mask, mode="L").save(out_dir / f"{stem}_pred_mask.png")
+        logger.success(f"已保存 mask: {out_dir / f'{stem}_pred_mask.png'}")
 
     panel = _build_panel_2x3(
         images=[image, gt_overlay, gt_color_mask, error_overlay, pred_overlay, pred_color_mask],

@@ -135,6 +135,7 @@ class ImagePredictor:
                 class_colors=_DEFAULT_CLASS_COLORS,
                 per_class_iou=metric["IoU"],
                 present_mask=present_mask,
+                pred_raw_mask=pred,
             )
             logger.info(
                 f"单图指标: mIoU={metric['mIoU']*100:.2f}%  Accuracy={metric['aAcc']*100:.2f}%"

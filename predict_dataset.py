@@ -52,7 +52,7 @@ from predictor.visuals import (
 class BatchPredictConfig:
     img_root: str = "dataset/tongji_data/img_dir"
     splits: list[str] = field(default_factory=lambda: ["train", "valid", "test"])
-    ckpt: str = "outputs_2203/tmds_run/best.pth"
+    ckpt: str = "outputs_2203/tmds_run1903/best.pth"
     device: str = "auto"
     output_dir: str = "outputs_2203/tmds_run1903/predict_dataset"
     input_size: int | None = None
@@ -175,8 +175,8 @@ def run_batch(cfg: BatchPredictConfig) -> None:
 
         logger.info(f"[{split}] 共 {len(image_paths)} 张图片 -> {out_dir}")
 
-        # (miou_or_None, panel_path)
-        results: list[tuple[float | None, Path]] = []
+        # (miou_or_None, panel_path, mask_path)
+        results: list[tuple[float | None, Path, Path]] = []
 
         for image_path in image_paths:
             image_np, input_tensor = preprocess_image(image_path, input_size=input_size)
@@ -217,27 +217,33 @@ def run_batch(cfg: BatchPredictConfig) -> None:
                     per_class_iou=metrics["IoU"],
                     present_mask=present_mask,
                 )
-                panel_path = out_dir / f"{image_path.stem}_iou{miou * 100:.1f}_panel.png"
+                stem_iou = f"{image_path.stem}_iou{miou * 100:.1f}"
+                panel_path = out_dir / f"{stem_iou}_panel.png"
+                mask_save_path = out_dir / f"{stem_iou}_pred_mask.png"
                 Image.fromarray(panel).save(panel_path)
-                results.append((miou, panel_path))
+                Image.fromarray(pred, mode="L").save(mask_save_path)
+                results.append((miou, panel_path, mask_save_path))
                 logger.info(f"  {image_path.name:<20} mIoU={miou * 100:.2f}%")
             else:
                 panel = _panel_no_gt(image_np, pred_overlay, pred_color)
                 panel_path = out_dir / f"{image_path.stem}_panel.png"
+                mask_save_path = out_dir / f"{image_path.stem}_pred_mask.png"
                 Image.fromarray(panel).save(panel_path)
-                results.append((None, panel_path))
+                Image.fromarray(pred, mode="L").save(mask_save_path)
+                results.append((None, panel_path, mask_save_path))
                 logger.warning(f"  {image_path.name:<20} 未找到 GT mask，跳过 IoU")
 
         # --- 按 mIoU 由高到低重命名，加 rank 前缀 ---
         ranked = sorted(
-            [(iou, p) for iou, p in results if iou is not None],
+            [(iou, p, m) for iou, p, m in results if iou is not None],
             key=lambda x: x[0],
             reverse=True,
         )
-        for rank, (_, panel_path) in enumerate(ranked, start=1):
+        for rank, (_, panel_path, mask_path) in enumerate(ranked, start=1):
             if panel_path.exists():
-                new_path = panel_path.parent / f"rank{rank:03d}_{panel_path.name}"
-                panel_path.rename(new_path)
+                panel_path.rename(panel_path.parent / f"rank{rank:03d}_{panel_path.name}")
+            if mask_path.exists():
+                mask_path.rename(mask_path.parent / f"rank{rank:03d}_{mask_path.name}")
 
         logger.success(f"[{split}] 完成，已按 mIoU 排序，结果: {out_dir.resolve()}")
 
