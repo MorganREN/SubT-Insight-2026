@@ -8,7 +8,7 @@ import json
 import math
 import random
 import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -77,6 +77,7 @@ class Sample:
 	json_path: Path
 	image_path: Path | None
 	image_data_b64: str | None
+	classes: frozenset = field(default_factory=frozenset)  # 该样本包含的类别 ID 集合
 
 
 def normalize_label(label: str) -> str:
@@ -138,30 +139,69 @@ def collect_samples() -> list[Sample]:
 			print(f"[跳过] 无对应图片: {json_path.name}")
 			continue
 
+		classes = frozenset(
+			c for shape in data.get("shapes", [])
+			for c in [map_label_to_class(str(shape.get("label", "")))]
+			if c is not None
+		)
 		samples.append(
 			Sample(
 				stem=json_path.stem,
 				json_path=json_path,
 				image_path=image_path,
 				image_data_b64=None,
+				classes=classes,
 			)
 		)
 	return samples
 
 
 def split_samples(samples: list[Sample]) -> dict[str, list[Sample]]:
+	"""按类别签名（样本中出现的类别集合）分层，保证各病害在三个子集中的比例均衡。
+
+	对于同一类别签名的组：
+	  - 组大小 == 1：全部归 train
+	  - 组大小 == 2：1 train + 1 valid，test 无该组样本
+	  - 组大小 >= 3：按 SPLIT_RATIO 比例分配，train 至少 1 个
+	"""
 	random.seed(RANDOM_SEED)
-	random.shuffle(samples)
 
-	n = len(samples)
-	n_train = int(n * SPLIT_RATIO[0])
-	n_valid = int(n * SPLIT_RATIO[1])
+	# 按类别签名分组
+	groups: dict[frozenset, list[Sample]] = {}
+	for s in samples:
+		groups.setdefault(s.classes, []).append(s)
 
-	return {
-		"train": samples[:n_train],
-		"valid": samples[n_train:n_train + n_valid],
-		"test": samples[n_train + n_valid:],
-	}
+	train: list[Sample] = []
+	valid: list[Sample] = []
+	test: list[Sample] = []
+
+	for group in groups.values():
+		random.shuffle(group)
+		n = len(group)
+
+		if n == 1:
+			train.extend(group)
+			continue
+		if n == 2:
+			train.append(group[0])
+			valid.append(group[1])
+			continue
+
+		n_train = max(1, round(n * SPLIT_RATIO[0]))
+		n_valid = round(n * SPLIT_RATIO[1])
+		# 防止越界
+		if n_train + n_valid >= n:
+			n_valid = n - n_train - 1
+		train.extend(group[:n_train])
+		valid.extend(group[n_train:n_train + n_valid])
+		test.extend(group[n_train + n_valid:])
+
+	# 打乱各子集内部顺序，避免同类别连续
+	random.shuffle(train)
+	random.shuffle(valid)
+	random.shuffle(test)
+
+	return {"train": train, "valid": valid, "test": test}
 
 
 def load_image(sample: Sample, data: dict) -> Image.Image:
