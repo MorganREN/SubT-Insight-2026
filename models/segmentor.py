@@ -6,6 +6,7 @@ import torch.nn.functional as F
 from loguru import logger
 
 from .backbones.dinov3_convnext import DINOv3ConvNeXt
+from .backbones.dinov3_vits16plus import DINOv3ViTS16Plus
 from .heads.uper_head import UPerHead
 from .heads.mlp_head import MLPHead
 
@@ -15,6 +16,7 @@ class TunnelSegmentor(nn.Module):
     端到端语义分割模型。
     Args:
         num_classes:          类别数 (含背景)
+        backbone_type:        骨干类型 ("convnext_tiny" / "vit_s16plus")
         backbone_weight_path: DINOv3 预训练权重路径, None=不加载
         head_type:            解码头类型 ("uper" / "mlp")
         frozen_stages:        冻结 backbone 前 N 个 stage
@@ -27,6 +29,7 @@ class TunnelSegmentor(nn.Module):
     def __init__(
         self,
         num_classes: int = 7,
+        backbone_type: str = "convnext_tiny",
         backbone_weight_path: str = None,
         head_type: str = "mlp",
         frozen_stages: int = 0,
@@ -39,10 +42,18 @@ class TunnelSegmentor(nn.Module):
             pool_scales = [1, 2, 4, 8]
 
         # ── Backbone ──
-        self.backbone = DINOv3ConvNeXt(
-            weight_path=backbone_weight_path,
-            frozen_stages=frozen_stages,
-        )
+        if backbone_type == "vit_s16plus":
+            self.backbone = DINOv3ViTS16Plus(
+                weight_path=backbone_weight_path,
+                frozen_stages=frozen_stages,
+            )
+            bb_name = "DINOv3 ViT-S+/16"
+        else:  # "convnext_tiny"（默认）
+            self.backbone = DINOv3ConvNeXt(
+                weight_path=backbone_weight_path,
+                frozen_stages=frozen_stages,
+            )
+            bb_name = "DINOv3 ConvNeXt-Tiny"
         in_channels_list = self.backbone.out_channels  # (96, 192, 384, 768)
 
         # ── Decode Head ──
@@ -72,7 +83,7 @@ class TunnelSegmentor(nn.Module):
         trainable_params = sum(p.numel() for p in self.parameters() if p.requires_grad) / 1e6
         logger.info(
             f"TunnelSegmentor 初始化完成:\n"
-            f"  Backbone:  DINOv3 ConvNeXt-Tiny ({backbone_params:.1f}M)\n"
+            f"  Backbone:  {bb_name} ({backbone_params:.1f}M)\n"
             f"  Head:      {head_type.upper()} ({head_params:.1f}M)\n"
             f"  总参数:    {total_params:.1f}M (可训练: {trainable_params:.1f}M)"
         )

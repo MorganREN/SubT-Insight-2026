@@ -3,9 +3,10 @@ from __future__ import annotations
 import numpy as np
 import torch
 
+from .constants import IMAGENET_MEAN as _MEAN, IMAGENET_STD as _STD
 
-IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
-IMAGENET_STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+IMAGENET_MEAN = np.array(_MEAN, dtype=np.float32)
+IMAGENET_STD  = np.array(_STD,  dtype=np.float32)
 
 
 def normalize_image(image: np.ndarray) -> np.ndarray:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from dataload import CLASS_NAMES, NUM_CLASSES
+from dataload import NUM_CLASSES
 
 
 @dataclass
@@ -15,7 +15,6 @@ class TrainConfig:
     seed: int = 42
 
     num_classes: int = NUM_CLASSES
-    class_names: tuple[str, ...] = CLASS_NAMES
     backbone_type: str = "convnext_tiny"       # "convnext_tiny" | "vit_s16plus"
     backbone_weight_path: str | None = "dinov3_convnext_tiny_pretrain_lvd1689m-21b726bb.pth"
     head_type: str = "uper"

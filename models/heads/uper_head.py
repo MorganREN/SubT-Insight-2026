@@ -3,20 +3,29 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class PyramidPoolingModule(nn.Module):
-    """PPM 模块：通过不同尺度的池化获取全局上下文"""
-    def __init__(self, in_channels, out_channels, bin_sizes=[1, 2, 4, 8]):
+    """PPM 模块：通过不同尺度的池化获取全局上下文。
+
+    Parameters
+    ----------
+    norm_layer : callable, optional
+        接受 `num_channels` 的归一化层工厂，默认 ``nn.BatchNorm2d``。
+        传入 GroupNorm 示例：``functools.partial(nn.GroupNorm, num_groups)``
+    """
+    def __init__(self, in_channels, out_channels, bin_sizes=[1, 2, 4, 8], norm_layer=None):
         super().__init__()
+        if norm_layer is None:
+            norm_layer = nn.BatchNorm2d
         self.stages = nn.ModuleList([
             nn.Sequential(
                 nn.AdaptiveAvgPool2d(bin_size),
                 nn.Conv2d(in_channels, out_channels, 1, bias=False),
-                nn.BatchNorm2d(out_channels),
+                norm_layer(out_channels),
                 nn.ReLU(inplace=True)
             ) for bin_size in bin_sizes
         ])
         self.bottleneck = nn.Sequential(
             nn.Conv2d(in_channels + len(bin_sizes) * out_channels, out_channels, 3, padding=1, bias=False),
-            nn.BatchNorm2d(out_channels),
+            norm_layer(out_channels),
             nn.ReLU(inplace=True)
         )
 

@@ -62,62 +62,6 @@ RUN = BatchPredictConfig()
 
 
 # ---------------------------------------------------------------------------
-# 面板构建
-# ---------------------------------------------------------------------------
-
-def _panel_with_gt(
-    image: np.ndarray,
-    gt_overlay: np.ndarray,
-    gt_color: np.ndarray,
-    pred_overlay: np.ndarray,
-    pred_color: np.ndarray,
-    error_overlay: np.ndarray,
-    miou: float,
-    per_class_iou: np.ndarray,
-    present_mask: np.ndarray,
-) -> np.ndarray:
-    grid = _build_panel_2x3(
-        images=[image, gt_overlay, gt_color, error_overlay, pred_overlay, pred_color],
-        titles=[
-            "Original",
-            "GT Overlay",
-            "GT Segmented",
-            f"Error  mIoU={miou * 100:.1f}%",
-            "Pred Overlay",
-            "Pred Segmented",
-        ],
-    )
-    legend = build_legend_bar(
-        CLASS_NAMES, CLASS_COLORS,
-        width=grid.shape[1],
-        per_class_iou=per_class_iou,
-        present_mask=present_mask,
-    )
-    return np.concatenate([grid, legend], axis=0)
-
-
-def _panel_no_gt(
-    image: np.ndarray,
-    pred_overlay: np.ndarray,
-    pred_color: np.ndarray,
-) -> np.ndarray:
-    blank = _blank_like(image)
-    grid = _build_panel_2x3(
-        images=[image, blank, blank, blank, pred_overlay, pred_color],
-        titles=[
-            "Original",
-            "GT Overlay (N/A)",
-            "GT Segmented (N/A)",
-            "Error (N/A)",
-            "Pred Overlay",
-            "Pred Segmented",
-        ],
-    )
-    legend = build_legend_bar(CLASS_NAMES, CLASS_COLORS, width=grid.shape[1])
-    return np.concatenate([grid, legend], axis=0)
-
-
-# ---------------------------------------------------------------------------
 # 主推理流程
 # ---------------------------------------------------------------------------
 
@@ -206,17 +150,19 @@ def run_batch(cfg: BatchPredictConfig) -> None:
                     gt_mask[gt_mask != 255].ravel(), minlength=num_classes
                 ).astype(bool)
 
-                panel = _panel_with_gt(
-                    image=image_np,
-                    gt_overlay=gt_overlay,
-                    gt_color=gt_color,
-                    pred_overlay=pred_overlay,
-                    pred_color=pred_color,
-                    error_overlay=error_overlay,
-                    miou=miou,
-                    per_class_iou=metrics["IoU"],
-                    present_mask=present_mask,
+                _grid = _build_panel_2x3(
+                    images=[image_np, gt_overlay, gt_color, error_overlay, pred_overlay, pred_color],
+                    titles=[
+                        "Original", "GT Overlay", "GT Segmented",
+                        f"Error  mIoU={miou * 100:.1f}%",
+                        "Pred Overlay", "Pred Segmented",
+                    ],
                 )
+                _legend = build_legend_bar(
+                    CLASS_NAMES, CLASS_COLORS, width=_grid.shape[1],
+                    per_class_iou=metrics["IoU"], present_mask=present_mask,
+                )
+                panel = np.concatenate([_grid, _legend], axis=0)
                 stem_iou = f"{image_path.stem}_iou{miou * 100:.1f}"
                 panel_path = out_dir / f"{stem_iou}_panel.png"
                 mask_save_path = out_dir / f"{stem_iou}_pred_mask.png"
@@ -225,7 +171,16 @@ def run_batch(cfg: BatchPredictConfig) -> None:
                 results.append((miou, panel_path, mask_save_path))
                 logger.info(f"  {image_path.name:<20} mIoU={miou * 100:.2f}%")
             else:
-                panel = _panel_no_gt(image_np, pred_overlay, pred_color)
+                _grid = _build_panel_2x3(
+                    images=[image_np, _blank_like(image_np), _blank_like(image_np),
+                            _blank_like(image_np), pred_overlay, pred_color],
+                    titles=[
+                        "Original", "GT Overlay (N/A)", "GT Segmented (N/A)",
+                        "Error (N/A)", "Pred Overlay", "Pred Segmented",
+                    ],
+                )
+                _legend = build_legend_bar(CLASS_NAMES, CLASS_COLORS, width=_grid.shape[1])
+                panel = np.concatenate([_grid, _legend], axis=0)
                 panel_path = out_dir / f"{image_path.stem}_panel.png"
                 mask_save_path = out_dir / f"{image_path.stem}_pred_mask.png"
                 Image.fromarray(panel).save(panel_path)

@@ -9,6 +9,8 @@ from sklearn.decomposition import PCA
 from torchvision import transforms
 from loguru import logger
 
+from .constants import IMAGENET_MEAN, IMAGENET_STD
+
 
 def load_image(image_path: str, target_size: int = 512):
     """加载图像并进行标准化预处理。"""
@@ -17,7 +19,7 @@ def load_image(image_path: str, target_size: int = 512):
     transform = transforms.Compose([
         transforms.Resize((target_size, target_size)),
         transforms.ToTensor(),
-        transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+        transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
     ])
 
     img_tensor = transform(img).unsqueeze(0)  # [1, 3, H, W]

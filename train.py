@@ -90,7 +90,7 @@ TMDS_RUN = TrainConfig(
     device  = "auto",
     seed    = 42,
     dry_run = False,
-    resume  = "",
+    resume  = "outputs/tmds_run/last.pth",
 
     # ── 模型结构 ─────────────────────────────────────────────────────────────
     num_classes   = NUM_CLASSES,

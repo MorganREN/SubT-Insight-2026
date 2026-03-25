@@ -12,6 +12,7 @@ TMDS（Topology-aware Morphological Decoupled Segmentation）分割器。
 """
 from __future__ import annotations
 
+import functools
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -22,36 +23,7 @@ from .backbones.dinov3_vits16plus import DINOv3ViTS16Plus
 from .heads.mrm import MorphologicalRoutingModule
 from .heads.dsa_decoder import DSADecoder
 from .heads.cmim import CrossMorphologyInteractionModule
-
-
-class _PPM(nn.Module):
-    """Pyramid Pooling Module（面型流专用）。"""
-    def __init__(self, in_channels: int, out_channels: int, pool_scales: tuple = (1, 2, 4, 8)):
-        super().__init__()
-        _ng = max(1, out_channels // 8)
-        self.stages = nn.ModuleList([
-            nn.Sequential(
-                nn.AdaptiveAvgPool2d(s),
-                nn.Conv2d(in_channels, out_channels, 1, bias=False),
-                nn.GroupNorm(_ng, out_channels),
-                nn.ReLU(inplace=True),
-            )
-            for s in pool_scales
-        ])
-        self.bottleneck = nn.Sequential(
-            nn.Conv2d(in_channels + len(pool_scales) * out_channels, out_channels,
-                      3, padding=1, bias=False),
-            nn.GroupNorm(_ng, out_channels),
-            nn.ReLU(inplace=True),
-        )
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        size = x.shape[2:]
-        parts = [x] + [
-            F.interpolate(stage(x), size=size, mode='bilinear', align_corners=False)
-            for stage in self.stages
-        ]
-        return self.bottleneck(torch.cat(parts, dim=1))
+from .heads.uper_head import PyramidPoolingModule
 
 
 class ArealDecoder(nn.Module):
@@ -73,9 +45,9 @@ class ArealDecoder(nn.Module):
         pool_scales: tuple = (1, 2, 4, 8),
     ):
         super().__init__()
-        self.ppm = _PPM(in_channels_list[-1], channels, pool_scales)
-
         _ng = max(1, channels // 8)
+        _gn = functools.partial(nn.GroupNorm, _ng)
+        self.ppm = PyramidPoolingModule(in_channels_list[-1], channels, pool_scales, norm_layer=_gn)
         self.lateral_convs = nn.ModuleList([
             nn.Sequential(
                 nn.Conv2d(c, channels, 1, bias=False),
