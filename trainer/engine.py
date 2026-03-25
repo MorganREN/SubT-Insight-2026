@@ -17,6 +17,8 @@ from utils.optimizer import build_optimizer
 from utils.runtime import resolve_device, restore_training_checkpoint, setup_logger
 from utils.scheduler import build_scheduler, log_lr
 
+from utils.feishu import send_eval_result, send_training_done
+
 from .config import TrainConfig
 from .loss_factory import TMDSCriterion, build_loss, build_tmds_criterion
 
@@ -312,7 +314,7 @@ class SegmentationTrainer:
 
         # ── 损失 / 优化器 / 调度器 ──
         scaler    = GradScaler("cuda", enabled=use_amp)
-        evaluator = SegEvaluator(num_classes=cfg.num_classes, class_names=cfg.class_names)
+        evaluator = SegEvaluator(num_classes=cfg.num_classes, class_names=CLASS_NAMES)
 
         if cfg.use_tmds:
             # TMDS：在 run 循环内按阶段动态初始化，此处先置 None
@@ -415,7 +417,8 @@ class SegmentationTrainer:
                     + self._format_metrics(metrics)
                 )
 
-                if metrics["mIoU"] > best_miou:
+                is_best = metrics["mIoU"] > best_miou
+                if is_best:
                     best_miou = metrics["mIoU"]
                     self._save_checkpoint(
                         {
@@ -432,6 +435,16 @@ class SegmentationTrainer:
                     logger.success(
                         f"✅ 新最优模型！mIoU={best_miou * 100:.2f}%  → {out_dir / 'best.pth'}"
                     )
+
+                send_eval_result(
+                    epoch=epoch,
+                    total_epochs=cfg.epochs,
+                    metrics=metrics,
+                    val_loss=val_loss,
+                    is_best=is_best,
+                    class_names=CLASS_NAMES,
+                    run_name=Path(cfg.output_dir).name,
+                )
 
             self._save_checkpoint(
                 {
@@ -450,5 +463,11 @@ class SegmentationTrainer:
         logger.success(f"最优模型: {out_dir / 'best.pth'}")
         logger.success(f"日志文件: {out_dir / 'train.log'}")
         logger.success("=" * 70)
+
+        send_training_done(
+            best_miou=best_miou,
+            output_dir=str(out_dir.resolve()),
+            run_name=Path(cfg.output_dir).name,
+        )
 
         return best_miou
