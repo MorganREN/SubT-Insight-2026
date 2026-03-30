@@ -64,8 +64,13 @@ class CrossMorphologyInteractionModule(nn.Module):
         fl = FL_s.view(B, C, Hs * Ws).permute(0, 2, 1)          # [B, HW_s, C]
         fa = FA_s.view(B, C, Hs * Ws).permute(0, 2, 1)
 
-        l_ctx_s, _ = self.L_to_A(fl, fa, fa)                    # [B, HW_s, C]
-        a_ctx_s, _ = self.A_to_L(fa, fl, fl)
+        # MultiheadAttention 在 fp16 下 Q·K^T 随特征幅值增大可超过 65504 → inf → NaN
+        # 强制 float32 计算后还原为原始 dtype（参考 DSADecoder 的同类处理）
+        _dtype = fl.dtype
+        l_ctx_s, _ = self.L_to_A(fl.float(), fa.float(), fa.float())  # [B, HW_s, C]
+        l_ctx_s = l_ctx_s.to(_dtype)
+        a_ctx_s, _ = self.A_to_L(fa.float(), fl.float(), fl.float())
+        a_ctx_s = a_ctx_s.to(_dtype)
 
         # ── 将注意力上下文上采样到全分辨率 ────────────────────────────────────
         L_ctx = l_ctx_s.permute(0, 2, 1).view(B, C, Hs, Ws)

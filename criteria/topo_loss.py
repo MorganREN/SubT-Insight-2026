@@ -221,7 +221,7 @@ class TopologyLoss(nn.Module):
         logits : [B, C, H, W]
         masks  : [B, H, W] int64 类别标签
         """
-        probs = F.softmax(logits, dim=1)
+        probs = F.softmax(logits.float(), dim=1)
         crack_probs = probs[:, self.crack_class_idx]          # [B, H, W]
         crack_gt    = (masks == self.crack_class_idx).long()  # [B, H, W]
 

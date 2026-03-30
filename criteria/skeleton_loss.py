@@ -53,13 +53,13 @@ class SkeletonLoss(nn.Module):
         -------
         scalar Tensor（在骨架像素处的 BCE，无骨架像素时返回 0）
         """
-        probs = F.softmax(logits, dim=1)
+        probs = F.softmax(logits.float(), dim=1)
         crack_prob = probs[:, self.crack_class_idx]   # [B, H, W]
 
         valid = skel_mask.bool()
         if not valid.any():
             return crack_prob.sum() * 0.0
 
-        pred   = crack_prob[valid].clamp(1e-4, 1 - 1e-4)  # 防止 log(0) 在 FP16 下溢出
-        target = torch.ones_like(pred)                    # 骨架处目标概率=1
-        return F.binary_cross_entropy(pred, target)
+        # target 全为 1，BCE = -log(pred)；手动计算以绕过 autocast 对 F.binary_cross_entropy 的拦截
+        pred = crack_prob[valid].clamp(1e-4, 1 - 1e-4)
+        return -pred.log().mean()

@@ -99,8 +99,9 @@ class DiceLoss(nn.Module):
         targets = targets.contiguous()
         B, C, H, W = logits.shape
 
-        # Softmax 转为概率
-        probs = logits.softmax(dim=1)  # (B, C, H, W)
+        # Softmax 转为概率；强制 float32 避免 AMP 下 float16 在 512×512 求和时溢出
+        # float16 最大值 65504，对 262144 个像素求和会超限导致 NaN
+        probs = logits.float().softmax(dim=1)  # (B, C, H, W)
 
         # One-hot 编码目标：将 ignore_index 像素暂时置 0（会被 valid_mask 排除）
         valid_mask = (targets != self.ignore_index)           # (B, H, W) bool
@@ -188,8 +189,10 @@ class FocalLoss(nn.Module):
         B, C, H, W = logits.shape
 
         # 计算标准 CE（逐像素，不降维）→ (B, H, W)
+        # 强制 float32：AMP 下 fp16 log_softmax 在 logits 幅值较大时
+        # 做减法 logit - log_sum_exp 可下溢到 -inf，导致 CE 上溢为 +inf
         ce_loss = F.cross_entropy(
-            logits, targets,
+            logits.float(), targets,
             reduction="none",
             ignore_index=self.ignore_index,
         )
@@ -198,7 +201,9 @@ class FocalLoss(nn.Module):
         with torch.no_grad():
             # 对 ignore 像素，用 target 的 clamp 避免越界
             targets_safe = targets.clamp(0, C - 1)
-            probs = logits.softmax(dim=1)                         # (B, C, H, W)
+            # 强制 float32：AMP 下 fp16 softmax 在 logits 幅值较大时会 inf/inf → NaN
+            # 与 DiceLoss 保持一致
+            probs = logits.float().softmax(dim=1)                 # (B, C, H, W)
             p_t   = probs.gather(1, targets_safe.unsqueeze(1))    # (B, 1, H, W)
             p_t   = p_t.squeeze(1)                                 # (B, H, W)
 
