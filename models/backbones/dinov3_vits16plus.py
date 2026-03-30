@@ -38,16 +38,18 @@ class DINOv3ViTS16Plus(nn.Module):
         self,
         weight_path: str = None,
         frozen_stages: int = -1,
+        img_size: int = 512,
     ):
         super().__init__()
 
         # timm ViT-S/16，关闭分类头，返回全部 token 序列
+        # 直接指定 img_size 而非 dynamic_img_size，兼容 timm < 0.9.5
         self.vit = timm.create_model(
             "vit_small_patch16_224",
             pretrained=False,
             num_classes=0,
             global_pool="",
-            dynamic_img_size=True,
+            img_size=img_size,
         )
 
         # 通道投影：ViT-S embed_dim=384 → 各 stage 目标通道数

@@ -200,7 +200,7 @@ class DINOv3ConvNeXt(nn.Module):
 
         # 冻结 stage 0 ~ stage_{frozen_stages - 1}
         for stage_idx in range(frozen_stages):
-            prefix = f"stages_{stage_idx}."
+            prefix = f"stages.{stage_idx}."
             for name, param in self.backbone.named_parameters():
                 if name.startswith(prefix):
                     param.requires_grad = False
