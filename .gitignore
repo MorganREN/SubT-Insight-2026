@@ -217,4 +217,5 @@ outputs_old/
 *.pyh
 *.log
 *.json
+*.png
 outputs_*/

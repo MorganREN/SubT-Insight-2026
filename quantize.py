@@ -54,7 +54,7 @@ from utils.quantizer import ModelQuantizer, QuantizerConfig
 # 运行配置（按需修改）
 @dataclass
 class QuantizeRunConfig:
-    ckpt: str = "outputs_2203/train_run/best.pth"                        # 留空 = 自动搜索 outputs/ 下最新 best.pth
+    ckpt: str = "outputs/tmds_run/best.pth"                        # 留空 = 自动搜索 outputs/ 下最新 best.pth
     mode: str = "static"                 # "dynamic" | "static"
     backend: str = "fbgemm"              # "fbgemm" (x86) | "qnnpack" (ARM)
     calib_batches: int = 64              # 静态量化校准 batch 数
@@ -62,7 +62,7 @@ class QuantizeRunConfig:
     split: str = "val"
     batch_size: int = 8
     num_workers: int = 2
-    output_dir: str = "outputs_2203/quantized_uper"
+    output_dir: str = "outputs/quantized_tmds_run"
 
 
 RUN = QuantizeRunConfig()

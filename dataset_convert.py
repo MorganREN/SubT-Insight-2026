@@ -18,7 +18,7 @@ from PIL import Image, ImageDraw, ImageOps
 SOURCE_DIR = Path("dataset/tongji")
 TARGET_DIR = Path("dataset/tongji_data")
 TARGET_SIZE = (640, 640)
-SPLIT_RATIO = (0.70, 0.15, 0.15)
+SPLIT_RATIO = (0.80, 0.10, 0.10)
 RANDOM_SEED = 42
 OVERLAY_INTENSITY = 115
 CLEAR_OUTPUT = True

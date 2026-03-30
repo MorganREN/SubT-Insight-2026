@@ -33,15 +33,15 @@ RUN = InferConfig(
 
 # ── TMDS 模型推理配置（将 main() 参数改为 TMDS_RUN 即可）────────────────────
 TMDS_RUN = InferConfig(
-    ckpt="outputs/quantized/model_int8.pth",
+    ckpt="outputs/tmds_run/best.pth",
     data_root="dataset/tongji_data",
-    split="test",
+    split="valid",
     device="auto",
     batch_size=2,            # TMDS 推理显存需求约为标准模型 2×，建议 batch=2
     num_workers=2,
     save_vis=True,
     vis_count=10,
-    output_dir="outputs/infer_tmds",
+    output_dir="outputs/tmds_run/infer_tmds",
 )
 
 

@@ -1,4 +1,3 @@
-from .constants import IMAGENET_MEAN, IMAGENET_STD
 from .feature_viz import (
     find_visualization_images,
     get_dinov3_convnext_features,
@@ -29,9 +28,6 @@ from .segmentation_vis import (
 from .quantizer import ModelQuantizer, QuantizerConfig
 
 __all__ = [
-    # constants
-    "IMAGENET_MEAN",
-    "IMAGENET_STD",
     # feature viz
     "find_visualization_images",
     "get_dinov3_convnext_features",

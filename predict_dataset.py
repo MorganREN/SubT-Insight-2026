@@ -51,10 +51,10 @@ from predictor.visuals import (
 @dataclass
 class BatchPredictConfig:
     img_root: str = "dataset/tongji_data/img_dir"
-    splits: list[str] = field(default_factory=lambda: ["train", "valid", "test"])
-    ckpt: str = "outputs_2203/tmds_run1903/best.pth"
+    splits: list[str] = field(default_factory=lambda: ["train", "valid"])
+    ckpt: str = "outputs/tmds_run/best.pth"
     device: str = "auto"
-    output_dir: str = "outputs_2203/tmds_run1903/predict_dataset"
+    output_dir: str = "outputs/tmds_run/predict_dataset"
     input_size: int | None = None
 
 
