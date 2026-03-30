@@ -21,7 +21,7 @@ class TrainConfig:
     head_channels: int = 160
     frozen_stages: int = 1
 
-    input_size: int = 384
+    input_size: int = 512
     batch_size: int = 4
     num_workers: int = 2
 
@@ -38,6 +38,10 @@ class TrainConfig:
     clip_grad: float = 1.0
     val_interval: int = 1
     use_amp: bool = True
+
+    # ── 增强数据 ─────────────────────────────────────────────────────────────
+    use_enhanced_data:    bool = False                         # True = 将 data_enhanced 追加到 train
+    enhanced_data_root:   str  = "dataset/data_enhanced"      # 增强数据根目录
 
     # ── TMDS 专属配置（use_tmds=False 时以下字段全部忽略）────────────────────
     use_tmds: bool = False          # True = 使用 TMDSSegmentor 替换 TunnelSegmentor
@@ -60,6 +64,5 @@ class TrainConfig:
 
     # TMDS 辅助损失权重
     aux_loss_weight:      float = 0.4   # linear_aux 和 areal_aux 损失各自乘以该系数
-    topo_loss_weight:     float = 0.5   # 拓扑损失权重（Stage3 启用）
     skeleton_loss_weight: float = 1.0   # 骨架损失权重（Stage3 且 use_skeleton_loss=True 时启用）
     use_skeleton_loss:    bool  = False  # 须先运行 tools/precompute_skeletons.py

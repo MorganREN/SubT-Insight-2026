@@ -23,7 +23,6 @@ from criteria.losses import (
     WeightedCrossEntropyLoss,
 )
 from criteria.metrics import SegEvaluator
-from criteria.topo_loss import TopologyLoss
 from criteria.skeleton_loss import SkeletonLoss
 
 __all__ = [
@@ -32,7 +31,6 @@ __all__ = [
     "DiceLoss",
     "FocalLoss",
     "CombinedLoss",
-    "TopologyLoss",
     "SkeletonLoss",
     # Metrics
     "SegEvaluator",

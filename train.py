@@ -26,8 +26,8 @@ RUN = TrainConfig(
     # ── 路径 ──────────────────────────────────────────────────────────────────
     data_root            = "dataset/tongji_data",   # 数据集根目录，需含 img_dir/ 和 ann_dir/
     output_dir           = "outputs/train_run",     # 训练输出目录，存放 best.pth / last.pth / train.log
-    backbone_type        = "vit_s16plus",         # 骨干类型："convnext_tiny" | "vit_s16plus"
-    backbone_weight_path = "dinov3_vits16plus_pretrain_lvd1689m-4057cbaa.pth",  # DINOv3 预训练权重路径；None = 随机初始化
+    backbone_type        = "convnext_tiny",         # 骨干类型："convnext_tiny" | "vit_s16plus"
+    backbone_weight_path = "dinov3_convnext_tiny_pretrain_lvd1689m-21b726bb.pth",  # DINOv3 预训练权重路径；None = 随机初始化
 
     # ── 运行控制 ─────────────────────────────────────────────────────────────
     device   = "auto",   # 计算设备："auto"（优先 CUDA）/ "cuda" / "cpu" / "mps"
@@ -44,10 +44,13 @@ RUN = TrainConfig(
                                   # 数据少时建议 1~2，数据充足时建议 0
 
     # ── 数据 ─────────────────────────────────────────────────────────────────
-    input_size  = 384,  # 模型输入的正方形边长（像素）；训练/推理需保持一致
+    input_size  = 512,  # 模型输入的正方形边长（像素）；训练/推理需保持一致
                         # 参考值：256（快速实验）/ 384（默认）/ 512（高精度，显存需求翻倍）
     batch_size  = 4,    # 每个训练 step 的样本数；显存不足时减小，建议保持 ≥ 2
     num_workers = 2,    # DataLoader 并行加载的进程数；一般设为 CPU 核数的一半
+
+    use_enhanced_data  = False,                   # True = 将 dataset/data_enhanced 追加进训练集
+    enhanced_data_root = "dataset/data_enhanced", # 增强数据目录（use_enhanced_data=True 时生效）
 
     # ── 损失函数 ─────────────────────────────────────────────────────────────
     loss_name     = "dice+focal",  # 损失组合："ce" / "dice" / "focal" /
@@ -57,7 +60,7 @@ RUN = TrainConfig(
     loss_weights  = None,          # 各子损失的加权系数，None = 使用内置默认值
                                    # 示例：loss_name="dice+focal" 时默认 (2.0, 1.0)
                                    #        可覆盖为 (1.0, 1.0) 等均等权重
-    use_class_weights = False,     # True = 按像素频率自动计算类别权重传给 CE/Dice
+    use_class_weights = True,     # True = 按像素频率自动计算类别权重传给 CE/Dice
                                    # 类别极度不均衡时开启；会遍历全部 mask 文件，耗时约数秒
 
     # ── 训练超参数 ───────────────────────────────────────────────────────────
@@ -82,7 +85,7 @@ RUN = TrainConfig(
 TMDS_RUN = TrainConfig(
     # ── 路径 ──────────────────────────────────────────────────────────────────
     data_root            = "dataset/tongji_data",
-    output_dir           = "outputs/tmds_run",
+    output_dir           = "outputs/tmds_run_enhanced",
     backbone_type        = "convnext_tiny",           # 骨干类型："convnext_tiny" | "vit_s16plus"
     backbone_weight_path = "dinov3_convnext_tiny_pretrain_lvd1689m-21b726bb.pth",
 
@@ -90,11 +93,11 @@ TMDS_RUN = TrainConfig(
     device  = "auto",
     seed    = 42,
     dry_run = False,
-    resume  = "outputs/tmds_run/last.pth",
+    resume  = "",
 
     # ── 模型结构 ─────────────────────────────────────────────────────────────
     num_classes   = NUM_CLASSES,
-    head_channels = 128,          # TMDS 建议 256（MRM/DSA/CMIM 通道宽度）
+    head_channels = 160,          # TMDS 建议 256（MRM/DSA/CMIM 通道宽度）
     use_tmds      = True,         # ← 关键开关：使用 TMDSSegmentor
 
     # DSA 解码器超参数（通常无需调整）
@@ -103,35 +106,33 @@ TMDS_RUN = TrainConfig(
     dsa_points_per_strip = 8,
 
     # ── 数据 ─────────────────────────────────────────────────────────────────
-    input_size  = 384,
+    input_size  = 512,
     batch_size  = 2,
     num_workers = 2,
 
-    # ── 三阶段训练（总 epoch = 20+40+40 = 100）───────────────────────────────
+    use_enhanced_data  = True,                   # True = 将 dataset/data_enhanced 追加进训练集
+    enhanced_data_root = "dataset/data_enhanced", # 增强数据目录（use_enhanced_data=True 时生效）
+
+    # ── 三阶段训练（总 epoch = 20+100+60 = 180）───────────────────────────────
     # stage_epochs 三元组各对应一个阶段的 epoch 数
-    stage_epochs        = (20, 40, 40),
+    stage_epochs        = (20, 100, 60),
     # stage_frozen_stages：-1=全冻结, 2=冻结前两个stage, 1=仅冻结stem+stage0
-    # Stage3 改为 frozen_stages=1（保持浅层骨干冻结）而非 0（全解冻），原因：
-    #   解码器在 Stage1/2 学会了与半冻结骨干特征配合；全解冻+拓扑损失同时上线
-    #   会导致特征分布突变 + 集中梯度双重冲击，crack IoU 从 40% 崩至个位数。
-    #   frozen_stages=1 只放开骨干深层（stage1~3），保持 stem+stage0 稳定性。
-    stage_frozen_stages = (-1, 2, 1),
+    stage_frozen_stages = (1, -1, -1),
     # 各阶段 base_lr（解码头学习率）
-    stage_base_lrs      = (3e-4, 2e-4, 6e-5),
-    # 各阶段损失组合（第三阶段额外叠加 topo/skeleton）
-    stage_loss_names    = ("ce+dice", "ce+dice+focal", "ce+dice+focal"),
+    stage_base_lrs      = (8e-4, 6e-4, 4e-4),
+    # 各阶段损失组合（第三阶段额外叠加 skeleton）
+    stage_loss_names    = ("dice+focal", "dice+focal", "dice+focal"),
 
     # ── TMDS 辅助损失权重 ─────────────────────────────────────────────────────
     aux_loss_weight      = 0.4,   # 线型/面型辅助输出各自的损失系数
-    topo_loss_weight     = 0.1,   # 拓扑损失系数（已归一化，保守起点；可逐步调至 0.2）
     skeleton_loss_weight = 0.5,   # 骨架损失系数
     use_skeleton_loss    = False,  # True = 启用骨架损失（需先运行 precompute_skeletons.py）
 
     # ── 通用训练超参数 ────────────────────────────────────────────────────────
-    use_class_weights = False,
+    use_class_weights = True,
     optimizer_type    = "adamw",
-    weight_decay      = 5e-3,
-    backbone_lr_mult  = 0.01,
+    weight_decay      = 4e-4,
+    backbone_lr_mult  = 0.005,
     scheduler         = "cosine",
     clip_grad         = 1.0,
     val_interval      = 5,        # 三阶段训练共 100 epoch，每 5 epoch 验证一次

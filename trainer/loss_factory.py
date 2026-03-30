@@ -21,7 +21,7 @@ from typing import Optional
 import torch
 import torch.nn as nn
 
-from criteria import CombinedLoss, TopologyLoss, SkeletonLoss
+from criteria import CombinedLoss, SkeletonLoss
 
 from .config import TrainConfig
 
@@ -115,17 +115,13 @@ class TMDSCriterion(nn.Module):
         self,
         base_criterion: CombinedLoss,
         aux_weight: float,
-        topo_loss: Optional[TopologyLoss] = None,
         skeleton_loss: Optional[SkeletonLoss] = None,
-        topo_weight: float = 0.5,
         skeleton_weight: float = 1.0,
     ):
         super().__init__()
         self.base_criterion  = base_criterion
         self.aux_weight      = aux_weight
-        self.topo_loss       = topo_loss
         self.skeleton_loss   = skeleton_loss
-        self.topo_weight     = topo_weight
         self.skeleton_weight = skeleton_weight
         self.last_components: dict[str, float] = {}
 
@@ -153,11 +149,6 @@ class TMDSCriterion(nn.Module):
             "lin_aux": lin_loss.item() * self.aux_weight,
             "are_aux": are_loss.item() * self.aux_weight,
         }
-
-        if self.topo_loss is not None:
-            tl = self.topo_loss(main, masks)
-            loss = loss + self.topo_weight * tl
-            self.last_components["topo"] = tl.item() * self.topo_weight
 
         if self.skeleton_loss is not None and skel_masks is not None:
             sl = self.skeleton_loss(main, skel_masks)
@@ -190,23 +181,18 @@ def build_tmds_criterion(
         device=device,
     )
 
-    # 拓扑损失和骨架损失仅在第三阶段（stage=2）启用
-    topo_loss     = TopologyLoss(crack_class_idx=1) if stage == 2 else None
+    # 骨架损失仅在第三阶段（stage=2）启用
     skeleton_loss = (
         SkeletonLoss(crack_class_idx=1)
         if (stage == 2 and cfg.use_skeleton_loss)
         else None
     )
-    if topo_loss is not None and device is not None:
-        topo_loss = topo_loss.to(device)
     if skeleton_loss is not None and device is not None:
         skeleton_loss = skeleton_loss.to(device)
 
     return TMDSCriterion(
         base_criterion=base,
         aux_weight=cfg.aux_loss_weight,
-        topo_loss=topo_loss,
         skeleton_loss=skeleton_loss,
-        topo_weight=cfg.topo_loss_weight,
         skeleton_weight=cfg.skeleton_loss_weight,
     )
