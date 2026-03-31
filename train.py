@@ -24,7 +24,7 @@ from trainer import SegmentationTrainer, TrainConfig
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 RUN = TrainConfig(
     # ── 路径 ──────────────────────────────────────────────────────────────────
-    data_root            = "dataset/tongji_data",   # 数据集根目录，需含 img_dir/ 和 ann_dir/
+    data_root            = "dataset/tongji_data_awesome",   # 数据集根目录，需含 img_dir/ 和 ann_dir/
     output_dir           = "outputs/train_run",     # 训练输出目录，存放 best.pth / last.pth / train.log
     backbone_type        = "convnext_tiny",         # 骨干类型："convnext_tiny" | "vit_s16plus"
     backbone_weight_path = "dinov3_convnext_tiny_pretrain_lvd1689m-21b726bb.pth",  # DINOv3 预训练权重路径；None = 随机初始化
@@ -49,7 +49,7 @@ RUN = TrainConfig(
     batch_size  = 4,    # 每个训练 step 的样本数；显存不足时减小，建议保持 ≥ 2
     num_workers = 2,    # DataLoader 并行加载的进程数；一般设为 CPU 核数的一半
 
-    use_enhanced_data  = False,                   # True = 将 dataset/data_enhanced 追加进训练集
+    use_enhanced_data  = False,                   # awesome 数据集本身已完成预处理，无需再追加
     enhanced_data_root = "dataset/data_enhanced", # 增强数据目录（use_enhanced_data=True 时生效）
 
     # ── 损失函数 ─────────────────────────────────────────────────────────────
@@ -84,8 +84,8 @@ RUN = TrainConfig(
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 TMDS_RUN = TrainConfig(
     # ── 路径 ──────────────────────────────────────────────────────────────────
-    data_root            = "dataset/tongji_data",
-    output_dir           = "outputs/tmds_run_enhanced",
+    data_root            = "dataset/tongji_data_awesome",
+    output_dir           = "outputs/tmds_run_awesome",
     backbone_type        = "convnext_tiny",           # 骨干类型："convnext_tiny" | "vit_s16plus"
     backbone_weight_path = "dinov3_convnext_tiny_pretrain_lvd1689m-21b726bb.pth",
 
@@ -110,7 +110,7 @@ TMDS_RUN = TrainConfig(
     batch_size  = 2,
     num_workers = 2,
 
-    use_enhanced_data  = True,                   # True = 将 dataset/data_enhanced 追加进训练集
+    use_enhanced_data  = False,                   # True = 将 dataset/data_enhanced 追加进训练集
     enhanced_data_root = "dataset/data_enhanced", # 增强数据目录（use_enhanced_data=True 时生效）
 
     # ── 三阶段训练（总 epoch = 20+100+60 = 180）───────────────────────────────

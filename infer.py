@@ -21,7 +21,7 @@ from inference import InferConfig, SegmentationInferencer
 # ── 标准模型推理配置 ──────────────────────────────────────────────────────────
 RUN = InferConfig(
     ckpt="",                 # 留空 = 自动选择 outputs/ 下最新 checkpoint
-    data_root="dataset/tongji_data",
+    data_root="dataset/tongji_data_awesome",
     split="val",             # val / test
     device="auto",           # auto / cuda / cpu / mps
     batch_size=4,
@@ -34,7 +34,7 @@ RUN = InferConfig(
 # ── TMDS 模型推理配置（将 main() 参数改为 TMDS_RUN 即可）────────────────────
 TMDS_RUN = InferConfig(
     ckpt="outputs/tmds_run/best.pth",
-    data_root="dataset/tongji_data",
+    data_root="dataset/tongji_data_awesome",
     split="valid",
     device="auto",
     batch_size=2,            # TMDS 推理显存需求约为标准模型 2×，建议 batch=2

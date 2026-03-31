@@ -121,13 +121,15 @@ class DeformableStripAttention(nn.Module):
             # Q: [B, H*W, 1, hd]
             Q_flat = Q_h.view(B, hd, H * W).permute(0, 2, 1).unsqueeze(2)
 
-            # 注意力权重在 float32 下计算，防止 Q@K 随权重增大后在 FP16 下 overflow
-            # FP16 max=65504，head_dim=64 的点积在值域扩张后可轻易超过此阈值
+            # 注意力权重及 V 加权求和均在 float32 下计算：
+            # Q@K 的点积（求和 head_dim 项）在值域扩张后可轻易超过 fp16 max(65504)；
+            # attn@V 的加权平均在 fp16 下理论有界，但保持 float32 可防止
+            # sV 幅值较大时的边缘溢出，同时与 CMIM 的做法保持一致。
             attn = torch.matmul(Q_flat.float(), sK.float().transpose(-1, -2)) * self.scale
-            attn = F.softmax(attn, dim=-1).to(Q_flat.dtype)
+            attn = F.softmax(attn, dim=-1)  # 保持 float32
 
             # 加权求和: [B, H*W, hd]
-            out_h = torch.matmul(attn, sV).squeeze(2)          # [B, H*W, hd]
+            out_h = torch.matmul(attn, sV.float()).to(Q_flat.dtype).squeeze(2)  # [B, H*W, hd]
             out_h = out_h.permute(0, 2, 1).view(B, hd, H, W)   # [B, hd, H, W]
             head_outputs.append(out_h)
 
