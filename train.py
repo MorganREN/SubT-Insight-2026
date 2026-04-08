@@ -85,15 +85,15 @@ RUN = TrainConfig(
 TMDS_RUN = TrainConfig(
     # ── 路径 ──────────────────────────────────────────────────────────────────
     data_root            = "dataset/tongji_data_awesome",
-    output_dir           = "outputs/tmds_run_awesome",
+    output_dir           = "outputs/tmds_run_awesome1",
     backbone_type        = "convnext_tiny",           # 骨干类型："convnext_tiny" | "vit_s16plus"
     backbone_weight_path = "dinov3_convnext_tiny_pretrain_lvd1689m-21b726bb.pth",
 
-    # ── 运行控制 ─────────────────────────────────────────────────────────────
+    # ── 运行控制 ────────────────────────────────────────ww─────────────────────
     device  = "auto",
     seed    = 42,
     dry_run = False,
-    resume  = "",
+    resume  = "outputs/tmds_run_awesome1/last.pth",
 
     # ── 模型结构 ─────────────────────────────────────────────────────────────
     num_classes   = NUM_CLASSES,
@@ -116,6 +116,7 @@ TMDS_RUN = TrainConfig(
     # ── 三阶段训练（总 epoch = 20+100+60 = 180）───────────────────────────────
     # stage_epochs 三元组各对应一个阶段的 epoch 数
     stage_epochs        = (20, 100, 60),
+    max_steps=2500,
     # stage_frozen_stages：-1=全冻结, 2=冻结前两个stage, 1=仅冻结stem+stage0
     stage_frozen_stages = (1, -1, -1),
     # 各阶段 base_lr（解码头学习率）

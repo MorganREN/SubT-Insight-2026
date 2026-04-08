@@ -143,6 +143,8 @@ class SegmentationTrainer:
         t0 = time.time()
 
         for step, batch in enumerate(loader, start=1):
+            if cfg.max_steps > 0 and step > cfg.max_steps:
+                break
             images    = batch[0].to(device, non_blocking=True)
             masks     = batch[1].to(device, non_blocking=True)
             skel_masks = (
