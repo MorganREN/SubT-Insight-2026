@@ -213,12 +213,10 @@ def _build_mask(shapes: list, width: int, height: int) -> np.ndarray:
 # ──────────────────────────────────────────────────────────────────────────────
 
 def _blur_variance(image: Image.Image) -> float:
-    """Laplacian 梯度方差，值越低越模糊。"""
+    """Laplacian 梯度方差，值越低越模糊。与 dataset_convert_raw.py 实现完全一致。"""
     gray = np.array(image.convert("L"), dtype=np.float32)
-    # 3×3 Laplacian kernel
-    kernel = np.array([[0, 1, 0], [1, -4, 1], [0, 1, 0]], dtype=np.float32)
-    from scipy.signal import convolve2d
-    lap = convolve2d(gray, kernel, mode="valid")
+    lap = (np.roll(gray, -1, 0) + np.roll(gray, 1, 0)
+           + np.roll(gray, -1, 1) + np.roll(gray, 1, 1) - 4 * gray)
     return float(lap.var())
 
 
@@ -614,6 +612,7 @@ def main(workers: int) -> None:
               f"(tiling={TILING_PARAMS[g]})")
 
     # ── 步骤 3：源图像层面划分 ───────────────────────────────────────────────
+    passed.sort(key=lambda s: s.stem)   # 确保多 worker 时顺序与 raw 脚本一致
     split_by_source(passed, RANDOM_SEED)
     train_n = sum(1 for s in passed if s.split == "train")
     valid_n = sum(1 for s in passed if s.split == "valid")
