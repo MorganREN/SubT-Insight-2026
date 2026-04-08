@@ -172,13 +172,19 @@ class DINOv3ViTS16Plus(nn.Module):
             x: [B, 3, H, W]，H 和 W 须为 16 的整数倍
 
         Returns:
-            List[Tensor]: 4 个 stage 的特征图（尺度与 ConvNeXt-Tiny 一致）
+            List[Tensor]: 4 个 stage 的特征图（尺度与 ConvNeXt-Tiny 一致，与输入同 dtype）
         """
         B, _, H, W = x.shape
         ph, pw = H // 16, W // 16
 
+        # ViT 内部含大量 LayerNorm；fp16 AMP 下大值经 LayerNorm var(inf)=nan。
+        # 强制 float32 执行，输出还原原始 dtype。
+        orig_dtype = x.dtype
+        x = x.float()
+
         self._hook_feats.clear()
-        self.vit(x)   # 前向传播触发钩子，各中间输出存入 _hook_feats
+        with torch.amp.autocast(x.device.type, enabled=False):
+            self.vit(x)   # 前向传播触发钩子，各中间输出存入 _hook_feats
 
         projs = [self.proj0, self.proj1, self.proj2, self.proj3]
         target_sizes = [
@@ -189,15 +195,16 @@ class DINOv3ViTS16Plus(nn.Module):
         ]
 
         out = []
-        for slot, (proj, tgt) in enumerate(zip(projs, target_sizes)):
-            tokens = self._hook_feats[slot]          # [B, 1+N_reg+N_patch, C]
-            # 取最后 ph*pw 个 token 作为 patch tokens（兼容有/无 register tokens）
-            patch_tokens = tokens[:, -ph * pw:, :]  # [B, ph*pw, C]
-            feat = patch_tokens.transpose(1, 2).reshape(B, _EMBED_DIM, ph, pw)
-            feat = proj(feat)
-            if feat.shape[2:] != tgt:
-                feat = F.interpolate(feat, size=tgt, mode="bilinear", align_corners=False)
-            out.append(feat)
+        with torch.amp.autocast(x.device.type, enabled=False):
+            for slot, (proj, tgt) in enumerate(zip(projs, target_sizes)):
+                tokens = self._hook_feats[slot]          # [B, 1+N_reg+N_patch, C]
+                # 取最后 ph*pw 个 token 作为 patch tokens（兼容有/无 register tokens）
+                patch_tokens = tokens[:, -ph * pw:, :]  # [B, ph*pw, C]
+                feat = patch_tokens.transpose(1, 2).reshape(B, _EMBED_DIM, ph, pw)
+                feat = proj(feat.float())
+                if feat.shape[2:] != tgt:
+                    feat = F.interpolate(feat, size=tgt, mode="bilinear", align_corners=False)
+                out.append(feat.to(orig_dtype))
 
         return out
 

@@ -36,6 +36,7 @@ from utils.segmentor_loader import (
     resolve_checkpoint_path,
 )
 from utils.segmentation_vis import blend_overlay, colorize_mask
+from predictor.tiling import tiled_predict
 from predictor.visuals import (
     _blank_like,
     _build_panel_2x3,
@@ -50,12 +51,13 @@ from predictor.visuals import (
 
 @dataclass
 class BatchPredictConfig:
-    img_root: str = "dataset/tongji_data/img_dir"
-    splits: list[str] = field(default_factory=lambda: ["train", "valid"])
-    ckpt: str = "outputs/tmds_run/best.pth"
+    img_root: str = "dataset/tongji_data_raw/img_dir"
+    splits: list[str] = field(default_factory=lambda: ["valid"])  # 默认仅推理 valid split，修改为 ["train", "valid", "test"] 可全量推理
+    ckpt: str = "outputs/tmds_run_awesome1/best.pth"
     device: str = "auto"
-    output_dir: str = "outputs/tmds_run/predict_dataset"
+    output_dir: str = "outputs/tmds_run_awesome1/predict_dataset"
     input_size: int | None = None
+    use_tiling: bool = True   # True = 对原图按群落参数做滑动窗口推理
 
 
 RUN = BatchPredictConfig()
@@ -123,10 +125,14 @@ def run_batch(cfg: BatchPredictConfig) -> None:
         results: list[tuple[float | None, Path, Path]] = []
 
         for image_path in image_paths:
-            image_np, input_tensor = preprocess_image(image_path, input_size=input_size)
-            logits = model(input_tensor.unsqueeze(0).to(device))
-            pred = logits.argmax(dim=1).squeeze(0).detach().cpu().numpy().astype(np.uint8)
-            pred = postprocess_mask(pred, original_hw=image_np.shape[:2])
+            image_np = np.array(Image.open(image_path).convert("RGB"), dtype=np.uint8)
+            if cfg.use_tiling:
+                pred = tiled_predict(model, image_np, device, num_classes, input_size)
+            else:
+                _, input_tensor = preprocess_image(image_path, input_size=input_size)
+                logits = model(input_tensor.unsqueeze(0).to(device))
+                pred = logits.argmax(dim=1).squeeze(0).detach().cpu().numpy().astype(np.uint8)
+                pred = postprocess_mask(pred, original_hw=image_np.shape[:2])
 
             pred_color = colorize_mask(pred, CLASS_COLORS)
             pred_overlay = blend_overlay(image_np, pred_color, alpha=0.45)

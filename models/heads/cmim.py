@@ -86,10 +86,13 @@ class CrossMorphologyInteractionModule(nn.Module):
         a_ctx_f = A_ctx.view(B, C, H * W).permute(0, 2, 1)
 
         gate_l  = self.gate_L(torch.cat([fl_full, l_ctx_f], dim=-1))
-        fl_enh  = self.norm_L(fl_full + gate_l * l_ctx_f)
+        # l_ctx_f 来自 MHA float32 输出转 fp16；若 MHA 输出幅值 > 65504，
+        # fp16 转换后变 inf，fp16 加法 inf + x = inf，LayerNorm(inf) → NaN。
+        # 显式 float32 算术确保加法不溢出，LayerNorm 已能处理 float32 输入。
+        fl_enh  = self.norm_L(fl_full.float() + gate_l.float() * l_ctx_f.float()).to(_dtype)
 
         gate_a  = self.gate_A(torch.cat([fa_full, a_ctx_f], dim=-1))
-        fa_enh  = self.norm_A(fa_full + gate_a * a_ctx_f)
+        fa_enh  = self.norm_A(fa_full.float() + gate_a.float() * a_ctx_f.float()).to(_dtype)
 
         F_L_enh = fl_enh.permute(0, 2, 1).view(B, C, H, W)
         F_A_enh = fa_enh.permute(0, 2, 1).view(B, C, H, W)

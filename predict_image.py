@@ -18,12 +18,13 @@ from predictor import ImagePredictor, PredictConfig
 
 
 RUN = PredictConfig(
-    image="dataset/tongji_data/img_dir/valid/C75.jpg",
+    image="dataset/tongji_data_raw/img_dir/valid/L269.jpg",
     mask="",
-    ckpt="outputs_2203/tmds_run1903/best.pth",            # 留空 = 自动选 outputs/ 下最新 checkpoint
+    ckpt="outputs/tmds_run_awesome1/best.pth",            # 留空 = 自动选 outputs/ 下最新 checkpoint
     device="auto",      # auto / cuda / cpu
-    output_dir="outputs_2203/predict_tmds",
+    output_dir="outputs/tmds_run_awesome1",
     input_size=None,
+    use_tiling=True
 )
 
 

@@ -242,9 +242,14 @@ class DINOv3ConvNeXt(nn.Module):
             x: [B, 3, H, W] 输入图像
 
         Returns:
-            List[Tensor]: 4 个 stage 的特征图
+            List[Tensor]: 4 个 stage 的特征图（与输入同 dtype）
         """
-        return self.backbone(x)
+        # ConvNeXt 内部含多个 LayerNorm；fp16 AMP 下大值特征经 LayerNorm 时
+        # var(inf)=nan，扩散至下游所有模块。强制 float32 执行，输出还原原始 dtype。
+        orig_dtype = x.dtype
+        with torch.amp.autocast(x.device.type, enabled=False):
+            feats = self.backbone(x.float())
+        return [f.to(orig_dtype) for f in feats]
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

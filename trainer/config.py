@@ -66,3 +66,6 @@ class TrainConfig:
     aux_loss_weight:      float = 0.4   # linear_aux 和 areal_aux 损失各自乘以该系数
     skeleton_loss_weight: float = 1.0   # 骨架损失权重（Stage3 且 use_skeleton_loss=True 时启用）
     use_skeleton_loss:    bool  = False  # 须先运行 tools/precompute_skeletons.py
+
+    # ── 调试 ─────────────────────────────────────────────────────────────────
+    max_steps: int = 0   # >0 = 每个 epoch 最多跑多少 step（0=不限）；用于快速验证
