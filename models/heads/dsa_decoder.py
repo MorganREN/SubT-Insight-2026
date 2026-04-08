@@ -58,16 +58,22 @@ class DeformableStripAttention(nn.Module):
         B, C, H, W = x.shape
         device = x.device
 
-        # ── 1. 预测条方向 ──────────────────────────────────────────────────────
-        dirs = self.direction_pred(x)                           # [B, nh*ns*2]
-        dirs = dirs.view(B, self.num_heads, self.num_strips, 2)
-        # FP16 下 eps=1e-12 会被截断为 0，导致 0/0=NaN；强制 float32 归一化后还原
-        dirs = F.normalize(dirs.float(), dim=-1, eps=1e-6).to(x.dtype)
+        # ── 1 & 2. 方向预测 + Q/K/V 投影（强制 float32）──────────────────────
+        # autocast 对 Linear/Conv2d 强制降级为 fp16：即使传入 x.float()，
+        # 输出仍是 fp16。训练几个 epoch 权重增大后，fp16 卷积输出超 65504 → inf；
+        # inf 经 grid_sample 传递，softmax(全行 inf) = NaN，
+        # GroupNorm(NaN) 扩散到 50% 通道。
+        # 通过 enabled=False 禁用 autocast，确保这些 op 真正在 float32 下执行。
+        _amp_ctx = torch.amp.autocast(x.device.type, enabled=False)
+        with _amp_ctx:
+            x_f = x.float()
+            dirs = self.direction_pred(x_f)                 # [B, nh*ns*2] float32
+            Q = self.q_proj(x_f)                            # [B, C, H, W] float32
+            K = self.k_proj(x_f)
+            V = self.v_proj(x_f)
 
-        # ── 2. Q / K / V 投影 ─────────────────────────────────────────────────
-        Q = self.q_proj(x)   # [B, C, H, W]
-        K = self.k_proj(x)
-        V = self.v_proj(x)
+        dirs = dirs.view(B, self.num_heads, self.num_strips, 2)
+        dirs = F.normalize(dirs, dim=-1, eps=1e-6)
 
         # ── 3. 构建采样坐标 ────────────────────────────────────────────────────
         # 沿条方向的 M 个采样点
@@ -83,60 +89,61 @@ class DeformableStripAttention(nn.Module):
         base = torch.stack([grid_x, grid_y], dim=-1)            # [H, W, 2]
         base_flat = base.view(1, H * W, 1, 2)                   # [1, H*W, 1, 2]
 
-        # ── 4. 逐注意力头执行条状注意力 ────────────────────────────────────────
+        # ── 4. 逐注意力头执行条状注意力（全程 float32，禁用 autocast）──────────
+        # autocast 会把 matmul/grid_sample 的 float32 输入降为 fp16 计算；
+        # 在 enabled=False 上下文内确保整个注意力链路真正使用 float32。
         head_outputs = []
-        for h in range(self.num_heads):
-            hd = self.head_dim
-            K_h = K[:, h * hd:(h + 1) * hd]   # [B, hd, H, W]
-            V_h = V[:, h * hd:(h + 1) * hd]
-            Q_h = Q[:, h * hd:(h + 1) * hd]
+        with _amp_ctx:
+            for h in range(self.num_heads):
+                hd = self.head_dim
+                K_h = K[:, h * hd:(h + 1) * hd]   # [B, hd, H, W] float32
+                V_h = V[:, h * hd:(h + 1) * hd]
+                Q_h = Q[:, h * hd:(h + 1) * hd]
 
-            # offsets for this head: [B, ns, M, 2]
-            off_h = strip_offsets[:, h]         # [B, ns, M, 2]
-            off_h = off_h.unsqueeze(2)          # [B, ns, 1, M, 2]
+                off_h = strip_offsets[:, h].unsqueeze(2)           # [B, ns, 1, M, 2]
+                sg = (base_flat + off_h).clamp(-1, 1)              # [B, ns, H*W, M, 2]
+                sg_flat = sg.reshape(B * self.num_strips, H * W, self.M, 2)
 
-            # sample_grid: [B, ns, H*W, M, 2]
-            sg = (base_flat + off_h).clamp(-1, 1)              # [B, ns, H*W, M, 2]
-            # reshape → [B*ns, H*W, M, 2]
-            sg_flat = sg.reshape(B * self.num_strips, H * W, self.M, 2)
+                K_h_flat = K_h.unsqueeze(1).expand(-1, self.num_strips, -1, -1, -1) \
+                              .reshape(B * self.num_strips, hd, H, W)
+                V_h_flat = V_h.unsqueeze(1).expand(-1, self.num_strips, -1, -1, -1) \
+                              .reshape(B * self.num_strips, hd, H, W)
 
-            # Expand K_h and V_h for all strips
-            K_h_exp = K_h.unsqueeze(1).expand(-1, self.num_strips, -1, -1, -1)
-            K_h_flat = K_h_exp.reshape(B * self.num_strips, hd, H, W)
-            V_h_exp = V_h.unsqueeze(1).expand(-1, self.num_strips, -1, -1, -1)
-            V_h_flat = V_h_exp.reshape(B * self.num_strips, hd, H, W)
+                # grid_sample：float32 输入 → float32 输出
+                sK = F.grid_sample(K_h_flat, sg_flat, mode='bilinear',
+                                   align_corners=True, padding_mode='border')
+                sV = F.grid_sample(V_h_flat, sg_flat, mode='bilinear',
+                                   align_corners=True, padding_mode='border')
 
-            # grid_sample → [B*ns, hd, H*W, M]
-            sK = F.grid_sample(K_h_flat, sg_flat, mode='bilinear',
-                               align_corners=True, padding_mode='border')
-            sV = F.grid_sample(V_h_flat, sg_flat, mode='bilinear',
-                               align_corners=True, padding_mode='border')
+                sK = sK.reshape(B, self.num_strips, hd, H * W, self.M) \
+                        .permute(0, 3, 1, 4, 2).reshape(B, H * W, self.num_strips * self.M, hd)
+                sV = sV.reshape(B, self.num_strips, hd, H * W, self.M) \
+                        .permute(0, 3, 1, 4, 2).reshape(B, H * W, self.num_strips * self.M, hd)
 
-            # Reshape → [B, H*W, ns*M, hd]
-            sK = sK.reshape(B, self.num_strips, hd, H * W, self.M)
-            sK = sK.permute(0, 3, 1, 4, 2).reshape(B, H * W, self.num_strips * self.M, hd)
-            sV = sV.reshape(B, self.num_strips, hd, H * W, self.M)
-            sV = sV.permute(0, 3, 1, 4, 2).reshape(B, H * W, self.num_strips * self.M, hd)
+                Q_flat = Q_h.view(B, hd, H * W).permute(0, 2, 1).unsqueeze(2)  # [B, H*W, 1, hd]
 
-            # Q: [B, H*W, 1, hd]
-            Q_flat = Q_h.view(B, hd, H * W).permute(0, 2, 1).unsqueeze(2)
+                # float32 matmul：不再受 autocast 降级影响
+                attn = torch.matmul(Q_flat, sK.transpose(-1, -2)) * self.scale
+                attn = F.softmax(attn, dim=-1)
+                out_h = torch.matmul(attn, sV).squeeze(2)          # [B, H*W, hd] float32
+                out_h = out_h.permute(0, 2, 1).view(B, hd, H, W)  # [B, hd, H, W]
+                head_outputs.append(out_h)
 
-            # 注意力权重及 V 加权求和均在 float32 下计算：
-            # Q@K 的点积（求和 head_dim 项）在值域扩张后可轻易超过 fp16 max(65504)；
-            # attn@V 的加权平均在 fp16 下理论有界，但保持 float32 可防止
-            # sV 幅值较大时的边缘溢出，同时与 CMIM 的做法保持一致。
-            attn = torch.matmul(Q_flat.float(), sK.float().transpose(-1, -2)) * self.scale
-            attn = F.softmax(attn, dim=-1)  # 保持 float32
-
-            # 加权求和: [B, H*W, hd]
-            out_h = torch.matmul(attn, sV.float()).to(Q_flat.dtype).squeeze(2)  # [B, H*W, hd]
-            out_h = out_h.permute(0, 2, 1).view(B, hd, H, W)   # [B, hd, H, W]
-            head_outputs.append(out_h)
-
-        # ── 5. 拼接各头 + 输出投影 ────────────────────────────────────────────
-        out = torch.cat(head_outputs, dim=1)    # [B, C, H, W]
-        out = self.out_proj(self.norm(out))
-        return out + x                           # 残差连接
+        # ── 5. 拼接各头 + GroupNorm（float32）+ 输出投影 ──────────────────────
+        # head_outputs 是 float32。若先 .to(fp16) 再做 GroupNorm，大值会先截断为 inf，
+        # GroupNorm 的 var(inf)=nan → 整组 NaN，这是 50% 通道异常的根本原因。
+        # 解决：直接用 F.group_norm + float32 参数在 float32 下做归一化，
+        # 归一化后值域收缩到 O(1)，再转 fp16 就不会溢出。
+        out = torch.cat(head_outputs, dim=1)                # [B, C, H, W] float32
+        out = F.group_norm(
+            out,
+            self.norm.num_groups,
+            self.norm.weight.float(),
+            self.norm.bias.float() if self.norm.bias is not None else None,
+            self.norm.eps,
+        )                                                    # float32, 值域有界
+        out = self.out_proj(out.to(x.dtype))                # out_proj：autocast fp16，归一化后安全
+        return out + x                                       # 残差连接
 
 
 class DSADecoder(nn.Module):
@@ -194,6 +201,16 @@ class DSADecoder(nn.Module):
         # 输出层归一化
         self.out_norm = nn.GroupNorm(_ng, channels)
 
+    @staticmethod
+    def _chk(t: torch.Tensor, tag: str) -> None:
+        """训练期 NaN/inf 定位探针（仅在异常时抛出，正常路径零开销）。"""
+        if not torch.isfinite(t).all():
+            pct = (~torch.isfinite(t)).float().mean().item() * 100
+            raise RuntimeError(
+                f"[DSADecoder NaN] {tag}: {pct:.1f}% 异常 "
+                f"(abs_max={t.abs().max().item():.3e})"
+            )
+
     def forward(self, features: list[torch.Tensor]) -> torch.Tensor:
         """
         Args:
@@ -201,30 +218,48 @@ class DSADecoder(nn.Module):
         Returns:
             [B, channels, H/4, W/4]
         """
-        # 侧边连接
-        laterals = [conv(f) for conv, f in zip(self.lateral_convs, features)]
+        orig_dtype = features[0].dtype
 
-        # 自顶向下 FPN 融合
-        for i in range(len(laterals) - 1, 0, -1):
-            laterals[i - 1] = laterals[i - 1] + F.interpolate(
-                laterals[i], size=laterals[i - 1].shape[2:],
-                mode='bilinear', align_corners=False,
-            )
+        # 整个 DSADecoder 在 float32 下执行：
+        # FPN Conv2d + GroupNorm + GELU 在 fp16 AMP 下遇到大值特征会溢出为 inf，
+        # GELU(inf)=inf 继续传播，GroupNorm(inf) → var(inf)=nan，50% 通道全 NaN。
+        # 用 autocast(enabled=False) 禁用自动降级，确保全链路 float32。
+        with torch.amp.autocast(features[0].device.type, enabled=False):
+            feats_f = [f.float() for f in features]
 
-        # FPN 卷积
-        fpn_outs = [conv(lat) for conv, lat in zip(self.fpn_convs, laterals)]
+            # 侧边连接
+            laterals = [conv(f) for conv, f in zip(self.lateral_convs, feats_f)]
 
-        # 上采样到 H/4，拼接所有尺度
-        target_size = fpn_outs[0].shape[2:]
-        fused = fpn_outs[0]
-        for feat in fpn_outs[1:]:
-            fused = fused + F.interpolate(feat, size=target_size,
-                                          mode='bilinear', align_corners=False)
+            # 自顶向下 FPN 融合
+            for i in range(len(laterals) - 1, 0, -1):
+                laterals[i - 1] = laterals[i - 1] + F.interpolate(
+                    laterals[i], size=laterals[i - 1].shape[2:],
+                    mode='bilinear', align_corners=False,
+                )
 
-        # 在 H/8 分辨率执行 DSA，减少 16× 中间张量（H/8=2304 tokens vs H/4=9216 tokens）
-        # DSA.forward 内部已含残差（out + x），直接上采样回 H/4 即可
-        fused_half = F.avg_pool2d(fused, kernel_size=2, stride=2)   # [B, C, H/8, W/8]
-        attended   = self.dsa(fused_half)                            # [B, C, H/8, W/8]（含残差）
-        out        = F.interpolate(attended, size=target_size,
-                                   mode='bilinear', align_corners=False)  # [B, C, H/4, W/4]
-        return self.out_norm(out)
+            # FPN 卷积
+            fpn_outs = [conv(lat) for conv, lat in zip(self.fpn_convs, laterals)]
+
+            # 上采样到 H/4，累加所有尺度
+            target_size = fpn_outs[0].shape[2:]
+            fused = fpn_outs[0]
+            for feat in fpn_outs[1:]:
+                fused = fused + F.interpolate(feat, size=target_size,
+                                              mode='bilinear', align_corners=False)
+
+            # 在 H/8 分辨率执行 DSA
+            fused_half = F.avg_pool2d(fused, kernel_size=2, stride=2)
+
+            if self.training:
+                self._chk(fused_half, "fused_half→dsa_input")
+
+            attended = self.dsa(fused_half)
+
+            if self.training:
+                self._chk(attended, "dsa_output")
+
+            out = F.interpolate(attended, size=target_size,
+                                mode='bilinear', align_corners=False)
+            out = self.out_norm(out)
+
+        return out.to(orig_dtype)

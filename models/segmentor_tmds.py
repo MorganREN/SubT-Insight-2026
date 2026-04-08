@@ -71,26 +71,34 @@ class ArealDecoder(nn.Module):
         )
 
     def forward(self, features: list[torch.Tensor]) -> torch.Tensor:
-        # PPM on deepest feature
-        ppm_out = self.ppm(features[-1])
-        fpn_outs = [ppm_out]
+        orig_dtype = features[0].dtype
+        # 与 DSADecoder 同理：FPN Conv+GroupNorm+ReLU 在 fp16 AMP 下遇大值特征会溢出，
+        # 全链路强制 float32，输出再还原为原始 dtype。
+        with torch.amp.autocast(features[0].device.type, enabled=False):
+            feats_f = [f.float() for f in features]
 
-        # Top-down FPN
-        for i in range(len(features) - 2, -1, -1):
-            lat = self.lateral_convs[i](features[i])
-            top = F.interpolate(fpn_outs[-1], size=lat.shape[2:],
-                                mode='bilinear', align_corners=False)
-            fpn_outs.append(self.fpn_convs[i](lat + top))
+            # PPM on deepest feature
+            ppm_out = self.ppm(feats_f[-1])
+            fpn_outs = [ppm_out]
 
-        fpn_outs = fpn_outs[::-1]  # [C1, C2, C3, C4] 顺序
+            # Top-down FPN
+            for i in range(len(feats_f) - 2, -1, -1):
+                lat = self.lateral_convs[i](feats_f[i])
+                top = F.interpolate(fpn_outs[-1], size=lat.shape[2:],
+                                    mode='bilinear', align_corners=False)
+                fpn_outs.append(self.fpn_convs[i](lat + top))
 
-        # 上采样到 H/4 并拼接
-        target = fpn_outs[0].shape[2:]
-        merged = [fpn_outs[0]] + [
-            F.interpolate(f, size=target, mode='bilinear', align_corners=False)
-            for f in fpn_outs[1:]
-        ]
-        return self.bottleneck(torch.cat(merged, dim=1))
+            fpn_outs = fpn_outs[::-1]  # [C1, C2, C3, C4] 顺序
+
+            # 上采样到 H/4 并拼接
+            target = fpn_outs[0].shape[2:]
+            merged = [fpn_outs[0]] + [
+                F.interpolate(f, size=target, mode='bilinear', align_corners=False)
+                for f in fpn_outs[1:]
+            ]
+            out = self.bottleneck(torch.cat(merged, dim=1))
+
+        return out.to(orig_dtype)
 
 
 class TMDSSegmentor(nn.Module):
@@ -200,46 +208,72 @@ class TMDSSegmentor(nn.Module):
         self.backbone.set_frozen_stages(frozen_stages)
         logger.info(f"Backbone frozen_stages 更新为: {frozen_stages}")
 
+    @staticmethod
+    def _assert_finite(t: torch.Tensor, name: str) -> None:
+        """训练期间定位 NaN/inf 来源；推理时不调用。"""
+        if not torch.isfinite(t).all():
+            bad_pct = (~torch.isfinite(t)).float().mean().item() * 100
+            raise RuntimeError(
+                f"[NaN/inf 定位] {name}: {bad_pct:.1f}% 异常值 "
+                f"(abs_max={t.abs().max().item():.3e})"
+            )
+
     def forward(self, x: torch.Tensor) -> torch.Tensor | dict:
         input_size = x.shape[2:]
+        orig_dtype = x.dtype
 
-        # ── 骨干特征提取 ───────────────────────────────────────────────────────
-        features = self.backbone(x)   # [C1@/4, C2@/8, C3@/16, C4@/32]
+        # ── 骨干特征提取（backbone 内部已强制 float32）────────────────────────
+        features = self.backbone(x)   # [C1@/4, C2@/8, C3@/16, C4@/32]，输出为 orig_dtype
 
-        # ── MRM 路由 ──────────────────────────────────────────────────────────
-        alpha = self.mrm(features[2])   # [B, 1, H/16, W/16]
+        # backbone 之后的所有模块（MRM / decoder / CMIM / cls head）同样在 float32
+        # 下执行：这些模块均含 Conv+GroupNorm/LayerNorm，fp16 AMP 下大值特征经
+        # 归一化层时 var(inf)=nan，是反复出现 NaN 的根本原因。
+        # 统一在此处禁用 autocast，不再逐个模块打补丁。
+        with torch.amp.autocast(x.device.type, enabled=False):
+            feats_f = [f.float() for f in features]
 
-        # clamp 到 [0.1, 0.9]：防止极端路由将某条流的特征归零。
-        # 归零后 GroupNorm 的方差≈0，输出被放大数百倍，FP16 下直接 overflow/NaN。
-        # [0.1, 0.9] 保留了足够的路由分辨力，同时确保两条流始终有有效信号。
-        alpha = alpha.clamp(0.1, 0.9)
+            # ── MRM 路由 ────────────────────────────────────────────────────────
+            alpha = self.mrm(feats_f[2])   # [B, 1, H/16, W/16]
+            alpha = alpha.clamp(0.1, 0.9)
 
-        linear_feats, areal_feats = [], []
-        for feat in features:
-            a = F.interpolate(alpha, size=feat.shape[2:],
-                              mode='bilinear', align_corners=False)
-            linear_feats.append(feat * a)
-            areal_feats.append(feat * (1.0 - a))
+            if self.training:
+                for i, f in enumerate(feats_f):
+                    self._assert_finite(f, f"backbone[{i}]")
+                self._assert_finite(alpha, "mrm/alpha")
 
-        # ── 双流解码 ──────────────────────────────────────────────────────────
-        F_L = self.linear_decoder(linear_feats)   # [B, ch, H/4, W/4]
-        F_A = self.areal_decoder(areal_feats)     # [B, ch, H/4, W/4]
+            linear_feats, areal_feats = [], []
+            for feat in feats_f:
+                a = F.interpolate(alpha, size=feat.shape[2:],
+                                  mode='bilinear', align_corners=False)
+                linear_feats.append(feat * a)
+                areal_feats.append(feat * (1.0 - a))
 
-        # ── 跨形态交互 ────────────────────────────────────────────────────────
-        F_L, F_A = self.cmim(F_L, F_A)
+            # ── 双流解码 ────────────────────────────────────────────────────────
+            F_L = self.linear_decoder(linear_feats)   # [B, ch, H/4, W/4]
+            F_A = self.areal_decoder(areal_feats)
 
-        # ── 分类 ──────────────────────────────────────────────────────────────
-        main    = self.main_cls(torch.cat([F_L, F_A], dim=1))
-        lin_aux = self.linear_aux_cls(F_L)
-        are_aux = self.areal_aux_cls(F_A)
+            if self.training:
+                self._assert_finite(F_L, "linear_decoder")
+                self._assert_finite(F_A, "areal_decoder")
 
-        # 上采样到输入分辨率
-        def _up(t):
-            return F.interpolate(t, size=input_size, mode='bilinear', align_corners=False)
+            # ── 跨形态交互 ──────────────────────────────────────────────────────
+            F_L, F_A = self.cmim(F_L, F_A)
 
-        main    = _up(main)
-        lin_aux = _up(lin_aux)
-        are_aux = _up(are_aux)
+            if self.training:
+                self._assert_finite(F_L, "cmim/F_L")
+                self._assert_finite(F_A, "cmim/F_A")
+
+            # ── 分类 ────────────────────────────────────────────────────────────
+            main    = self.main_cls(torch.cat([F_L, F_A], dim=1))
+            lin_aux = self.linear_aux_cls(F_L)
+            are_aux = self.areal_aux_cls(F_A)
+
+            def _up(t):
+                return F.interpolate(t, size=input_size, mode='bilinear', align_corners=False)
+
+            main    = _up(main).to(orig_dtype)
+            lin_aux = _up(lin_aux).to(orig_dtype)
+            are_aux = _up(are_aux).to(orig_dtype)
 
         if self.training:
             return {"main": main, "linear_aux": lin_aux, "areal_aux": are_aux}
