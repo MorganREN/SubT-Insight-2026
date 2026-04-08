@@ -11,3 +11,4 @@ class PredictConfig:
     device: str = "auto"
     output_dir: str = "outputs/predict"
     input_size: int | None = None
+    use_tiling: bool = True   # True = 按群落参数做滑动窗口推理（推荐用于原图）
