@@ -41,17 +41,8 @@ def build_scheduler(
         main_scheduler = CosineAnnealingLR(
             optimizer,
             T_max=after_warmup_epochs,
-            eta_min=0,           # 各 param_group 的 base_lr × min_lr_ratio 在 warmup 里处理
-            last_epoch=-1,
-        )
-        for pg in optimizer.param_groups:
-            pg["_base_lr"] = pg["lr"]
-        main_scheduler = CosineAnnealingLR(
-            optimizer,
-            T_max=after_warmup_epochs,
             eta_min=0,
         )
-        # 修正：为每个 param_group 设置动态 eta_min
         _apply_eta_min(optimizer, main_scheduler, min_lr_ratio)
 
     elif stype == "poly":

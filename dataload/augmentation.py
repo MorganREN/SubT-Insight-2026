@@ -15,8 +15,7 @@ from __future__ import annotations
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
 
-
-# ── ImageNet 归一化参数（与 DINOv3 预训练权重一致）──────────────────────────
+# 此处不从 utils.constants 导入，避免 dataload ↔ utils 循环依赖
 _IMAGENET_MEAN = (0.485, 0.456, 0.406)
 _IMAGENET_STD  = (0.229, 0.224, 0.225)
 

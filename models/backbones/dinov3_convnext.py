@@ -200,7 +200,7 @@ class DINOv3ConvNeXt(nn.Module):
 
         # 冻结 stage 0 ~ stage_{frozen_stages - 1}
         for stage_idx in range(frozen_stages):
-            prefix = f"stages_{stage_idx}."
+            prefix = f"stages.{stage_idx}."
             for name, param in self.backbone.named_parameters():
                 if name.startswith(prefix):
                     param.requires_grad = False
@@ -211,6 +211,25 @@ class DINOv3ConvNeXt(nn.Module):
             f"❄️ 冻结了 {frozen_stages} 个 stage "
             f"({frozen_params}/{total_params} 参数被冻结)"
         )
+
+    def set_frozen_stages(self, frozen_stages: int):
+        """
+        动态更新冻结阶段数。
+
+        先解冻全部参数，再按新的 frozen_stages 重新冻结，
+        以确保状态与 __init__ 时的行为一致。
+
+        frozen_stages = -1: 冻结全部
+        frozen_stages = 0:  不冻结
+        frozen_stages = N:  冻结 stem + stage_0 ~ stage_{N-1}
+        """
+        # 先全部解冻
+        for param in self.backbone.parameters():
+            param.requires_grad = True
+
+        self.frozen_stages = frozen_stages
+        if frozen_stages != 0:
+            self._freeze_stages(frozen_stages)
 
     @property
     def out_channels(self):
@@ -223,9 +242,14 @@ class DINOv3ConvNeXt(nn.Module):
             x: [B, 3, H, W] 输入图像
 
         Returns:
-            List[Tensor]: 4 个 stage 的特征图
+            List[Tensor]: 4 个 stage 的特征图（与输入同 dtype）
         """
-        return self.backbone(x)
+        # ConvNeXt 内部含多个 LayerNorm；fp16 AMP 下大值特征经 LayerNorm 时
+        # var(inf)=nan，扩散至下游所有模块。强制 float32 执行，输出还原原始 dtype。
+        orig_dtype = x.dtype
+        with torch.amp.autocast(x.device.type, enabled=False):
+            feats = self.backbone(x.float())
+        return [f.to(orig_dtype) for f in feats]
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

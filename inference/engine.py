@@ -11,6 +11,7 @@ from loguru import logger
 
 from criteria import SegEvaluator
 from dataload import CLASS_COLORS, CLASS_NAMES, NUM_CLASSES, build_dataloaders
+from predictor.tiling import tiled_predict
 from utils.runtime import load_checkpoint_compat, resolve_device, setup_logger
 from utils.segmentor_loader import (
     build_segmentor_from_checkpoint,
@@ -37,11 +38,48 @@ class SegmentationInferencer:
 
     @staticmethod
     @torch.no_grad()
+    def _evaluate_tiled(
+        model,
+        img_dir: Path,
+        ann_dir: Path,
+        device: torch.device,
+        num_classes: int,
+        input_size: int,
+        class_names: tuple[str, ...],
+    ) -> dict:
+        """原图 tiling 推理 + 评估，pred 和 GT 均在原始分辨率下对比。"""
+        evaluator  = SegEvaluator(num_classes=num_classes, class_names=class_names)
+        img_paths  = sorted(img_dir.glob("*.jpg"))
+        total      = len(img_paths)
+        logger.info(f"tiling 评估: {total} 张原图 (input_size={input_size})")
+        for i, img_path in enumerate(img_paths, 1):
+            image_np = np.array(Image.open(img_path).convert("RGB"), dtype=np.uint8)
+            ann_path = ann_dir / f"{img_path.stem}.png"
+            if not ann_path.exists():
+                logger.warning(f"缺少 GT mask，跳过: {img_path.name}")
+                continue
+            gt_mask  = np.array(Image.open(ann_path).convert("L"), dtype=np.uint8)
+            pred_mask = tiled_predict(model, image_np, device, num_classes, input_size)
+            evaluator.update(pred_mask[np.newaxis], gt_mask[np.newaxis])
+            if i % 50 == 0 or i == total:
+                logger.info(f"  {i}/{total}")
+        metrics = evaluator.compute()
+        evaluator.print_table(metrics)
+        logger.info(
+            f"评估摘要: aAcc={metrics['aAcc']*100:.2f}%  "
+            f"mIoU={metrics['mIoU']*100:.2f}%  "
+            f"mDice={metrics['mDice']*100:.2f}%"
+        )
+        return metrics
+
+    @staticmethod
+    @torch.no_grad()
     def _evaluate(model, loader, device: torch.device, class_names: tuple[str, ...]):
         evaluator = SegEvaluator(num_classes=len(class_names), class_names=class_names)
-        for images, masks in loader:
-            images = images.to(device, non_blocking=True)
-            masks = masks.to(device, non_blocking=True)
+        for batch in loader:
+            images = batch[0].to(device, non_blocking=True)
+            masks  = batch[1].to(device, non_blocking=True)
+            # TMDSSegmentor 在 eval 模式返回单张量，与 TunnelSegmentor 接口一致
             logits = model(images)
             evaluator.update(logits, masks)
 
@@ -64,7 +102,8 @@ class SegmentationInferencer:
         logger.info(f"开始保存可视化: {total} 张 → {vis_dir}")
 
         for idx in range(total):
-            image, gt_mask = dataset[idx]
+            sample = dataset[idx]
+            image, gt_mask = sample[0], sample[1]   # 兼容 2-tuple 和 3-tuple（含 skel_mask）
             image_b = image.unsqueeze(0).to(device)
             logits = model(image_b)
             pred_mask = logits.argmax(dim=1).squeeze(0).detach().cpu().numpy().astype(np.uint8)
@@ -142,10 +181,24 @@ class SegmentationInferencer:
             use_backbone_weight_from_cfg=True,
             use_frozen_stages_from_cfg=True,
         )
-        metrics = self._evaluate(model, loader, device, class_names=class_names)
+
+        if cfg.use_tiling:
+            # 原图 tiling 推理：不经过 DataLoader，直接逐张读取原始分辨率图像
+            split_key = "valid" if cfg.split in ("val", "valid") else cfg.split
+            img_dir   = Path(cfg.data_root) / "img_dir" / split_key
+            ann_dir   = Path(cfg.data_root) / "ann_dir" / split_key
+            metrics   = self._evaluate_tiled(
+                model, img_dir, ann_dir, device,
+                num_classes=NUM_CLASSES,
+                input_size=input_size,
+                class_names=class_names,
+            )
+        else:
+            metrics = self._evaluate(model, loader, device, class_names=class_names)
+
         self._save_metrics(metrics, out_dir)
 
-        if cfg.save_vis:
+        if cfg.save_vis and not cfg.use_tiling:
             self._save_visualizations(model, loader.dataset, device, out_dir, cfg.vis_count)
 
         logger.success("=" * 70)

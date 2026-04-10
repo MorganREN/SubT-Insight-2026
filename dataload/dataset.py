@@ -62,11 +62,57 @@ NUM_CLASSES: int = len(CLASS_NAMES)
 # 辅助函数
 # ──────────────────────────────────────────────────────────────────────────────
 
+def collect_enhanced_pairs(
+    enhanced_root: str | Path,
+) -> List[Tuple[Path, Path, Optional[Path]]]:
+    """
+    扫描 data_enhanced 的平铺目录结构，收集 (img_path, mask_path, None) 三元组。
+
+    约定
+    ----
+    增强数据目录下每个类别含两个子目录：
+        ``{X} img/``   ←  RGB 图像 (.jpg)
+        ``{X} mask/``  ←  灰度掩码 (.png)，像素值与主数据集类别 ID 一致
+    img 目录名中的 "carack" 拼写错误会自动匹配到对应 mask 目录。
+    增强数据无骨架文件，故第三元素始终为 None。
+    """
+    root = Path(enhanced_root)
+    if not root.exists():
+        logger.warning(f"增强数据目录不存在，跳过: {root}")
+        return []
+
+    pairs: List[Tuple[Path, Path, Optional[Path]]] = []
+
+    for img_dir in sorted(root.iterdir()):
+        if not img_dir.is_dir() or not img_dir.name.endswith(" img"):
+            continue
+
+        # 先按原名找 mask 目录，再尝试修正 carack→crack 拼写
+        base_name = img_dir.name[:-4]  # strip " img"
+        mask_dir = root / f"{base_name} mask"
+        if not mask_dir.exists():
+            mask_dir = root / f"{base_name.replace('carack', 'crack')} mask"
+        if not mask_dir.exists():
+            logger.warning(f"增强数据找不到对应 mask 目录: {img_dir.name}")
+            continue
+
+        for img_path in sorted(img_dir.glob("*.jpg")):
+            mask_path = mask_dir / f"{img_path.stem}.png"
+            if not mask_path.exists():
+                logger.warning(f"增强数据缺少 mask，跳过: {img_path.name}")
+                continue
+            pairs.append((img_path, mask_path, None))
+
+    logger.info(f"collect_enhanced_pairs: {len(pairs)} 个增强样本 ← {root}")
+    return pairs
+
+
 def _collect_pairs(
     data_root: str | Path,
     split: str,
-) -> List[Tuple[Path, Path]]:
-    """扫描单个 data_root，收集 (img_path, mask_path) 配对。"""
+    skel_dir: Optional[str | Path] = None,
+) -> List[Tuple[Path, Path, Optional[Path]]]:
+    """扫描单个 data_root，收集 (img_path, mask_path, skel_path?) 三元组。"""
     root    = Path(data_root)
     img_dir = root / "img_dir" / split
     ann_dir = root / "ann_dir" / split
@@ -75,14 +121,23 @@ def _collect_pairs(
         logger.warning(f"img_dir 不存在，跳过: {img_dir}")
         return []
 
-    pairs: List[Tuple[Path, Path]] = []
+    # 骨架目录（可选）
+    if skel_dir is not None:
+        _skel_dir = Path(skel_dir) / split
+    else:
+        _skel_dir = root / "skel_dir" / split   # 约定默认位置
+
+    has_skel = _skel_dir.exists()
+
+    pairs: List[Tuple[Path, Path, Optional[Path]]] = []
     for img_path in sorted(img_dir.glob("*.jpg")):
         stem     = img_path.stem
         ann_path = ann_dir / f"{stem}.png"
-        if ann_path.exists():
-            pairs.append((img_path, ann_path))
-        else:
+        if not ann_path.exists():
             logger.warning(f"缺少对应 mask，跳过图像: {img_path.name}")
+            continue
+        skel_path = (_skel_dir / f"{stem}.png") if has_skel else None
+        pairs.append((img_path, ann_path, skel_path))
 
     return pairs
 
@@ -105,6 +160,11 @@ class TunnelDefectDataset(Dataset):
         ``mask`` (np.ndarray uint8) 的增强对象，返回含
         ``"image"`` (Tensor float32) 和 ``"mask"`` (Tensor int64) 的 dict。
         传 ``None`` 则仅读取图像和掩码，不做任何变换（返回原始 ndarray）。
+    skel_dir : str | Path | None, optional
+        骨架掩码根目录（须包含 ``{split}/`` 子目录）。传 ``None`` 时自动
+        查找 ``{data_root}/skel_dir/{split}/``；若该目录不存在则不加载骨架。
+        当任意 data_root 下存在骨架目录时，``__getitem__`` 会在返回值中
+        追加第三个元素 ``skel_mask``（Tensor int64，[H, W]，1=骨架像素）。
     image_suffix : str
         图像文件后缀，默认 ".jpg"。
     mask_suffix : str
@@ -118,8 +178,10 @@ class TunnelDefectDataset(Dataset):
         各类别名称。
     class_colors : tuple[tuple[int,int,int]]
         各类别 RGB 可视化颜色。
-    pairs : list[tuple[Path, Path]]
-        所有 (img_path, mask_path) 配对。
+    pairs : list[tuple[Path, Path, Path | None]]
+        所有 (img_path, mask_path, skel_path?) 三元组。
+    has_skeleton : bool
+        是否有至少一个样本附带骨架掩码。
     """
 
     # 类别元信息（直接引用模块级常量，方便外部访问）
@@ -133,9 +195,11 @@ class TunnelDefectDataset(Dataset):
         split: str,
         augmentation: Optional[Callable] = None,
         *,
+        skel_dir:      Optional[str | Path] = None,
         image_suffix:  str = ".jpg",
         mask_suffix:   str = ".png",
         ignore_index:  int = 255,
+        extra_pairs:   Optional[List[Tuple[Path, Path, Optional[Path]]]] = None,
     ):
         # 统一转 list
         if isinstance(data_roots, (str, Path)):
@@ -146,18 +210,26 @@ class TunnelDefectDataset(Dataset):
         _split = split.lower()
         self.split        = "valid" if _split == "val" else _split
         self.augmentation = augmentation
+        self.skel_dir     = Path(skel_dir) if skel_dir is not None else None
         self.image_suffix = image_suffix
         self.mask_suffix  = mask_suffix
         self.ignore_index = ignore_index
 
-        # 收集所有根目录下的 (img, mask) 配对
-        self.pairs: List[Tuple[Path, Path]] = []
+        # 收集所有根目录下的 (img, mask, skel?) 三元组
+        self.pairs: List[Tuple[Path, Path, Optional[Path]]] = []
         for root in self.data_roots:
-            new_pairs = _collect_pairs(root, self.split)
+            new_pairs = _collect_pairs(root, self.split, skel_dir=self.skel_dir)
             logger.info(
                 f"[{split}] {root.name}: {len(new_pairs)} 个样本"
             )
             self.pairs.extend(new_pairs)
+
+        # 追加外部传入的增强数据对（如 data_enhanced，无骨架）
+        if extra_pairs:
+            self.pairs.extend(extra_pairs)
+            logger.info(f"[{split}] +{len(extra_pairs)} 个增强样本（extra_pairs）")
+
+        self.has_skeleton: bool = any(p[2] is not None for p in self.pairs)
 
         if len(self.pairs) == 0:
             logger.warning(
@@ -174,8 +246,15 @@ class TunnelDefectDataset(Dataset):
         return len(self.pairs)
 
     def __getitem__(self, idx: int):
-        """加载并返回第 idx 个样本。"""
-        img_path, ann_path = self.pairs[idx]
+        """
+        加载并返回第 idx 个样本。
+
+        Returns
+        -------
+        无骨架：(image, mask)
+        有骨架：(image, mask, skel_mask)
+        """
+        img_path, ann_path, skel_path = self.pairs[idx]
 
         # ── 读取图像（RGB）──
         image = np.array(Image.open(img_path).convert("RGB"), dtype=np.uint8)
@@ -190,6 +269,12 @@ class TunnelDefectDataset(Dataset):
             mask = mask.copy()
             mask[out_of_range] = 0
 
+        # ── 读取骨架掩码（可选）──
+        skel_np: Optional[np.ndarray] = None
+        if skel_path is not None and skel_path.exists():
+            skel_raw = np.array(Image.open(skel_path).convert("L"), dtype=np.uint8)
+            skel_np  = (skel_raw > 0).astype(np.uint8)   # {0,1}
+
         # ── 数据增强 ──
         if self.augmentation is not None:
             output = self.augmentation(image=image, mask=mask)
@@ -200,12 +285,29 @@ class TunnelDefectDataset(Dataset):
             image = torch.from_numpy(image).permute(2, 0, 1).float() / 255.0
             mask  = torch.from_numpy(mask).long()
 
+        if self.has_skeleton:
+            if skel_np is not None:
+                skel_mask = torch.from_numpy(
+                    np.array(
+                        Image.fromarray(skel_np * 255).resize(
+                            (mask.shape[-1], mask.shape[-2]), Image.NEAREST
+                        )
+                    ) > 0
+                ).long()
+            else:
+                # 该样本无骨架文件（如原 valid 合并进 train 后），返回全零掩码
+                # 保证同一 batch 内所有样本元组长度一致，避免 collate 报错
+                skel_mask = torch.zeros(
+                    mask.shape[-2], mask.shape[-1], dtype=torch.long
+                )
+            return image, mask, skel_mask
+
         return image, mask
 
     def get_class_weights(self) -> torch.Tensor:
         """统计像素频率并返回类别权重。"""
         counts = np.zeros(self.num_classes, dtype=np.int64)
-        for _, ann_path in self.pairs:
+        for _, ann_path, *_ in self.pairs:
             mask = np.array(Image.open(ann_path).convert("L"), dtype=np.uint8)
             # 同 __getitem__：保留 ignore_index，仅修正其他越界 ID
             out_of_range = (mask >= self.num_classes) & (mask != self.ignore_index)
@@ -220,6 +322,11 @@ class TunnelDefectDataset(Dataset):
         freq = np.where(freq == 0, 1e-6, freq)
         weights = 1.0 / freq
         weights /= weights.sum()           # 归一化到总和=1
+
+        # 手动调整渗漏类别权重
+        weights[2] *= 0.5   # leakage_b × 0.5
+        weights[3] *= 1.5   # leakage_w × 1.5
+        weights[4] *= 2.0   # leakage_g × 2.0
 
         logger.info("类别像素频率:")
         for i, (name, f, w) in enumerate(

@@ -8,7 +8,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from .augmentation import SegmentationAugmentation
-from .dataset import TunnelDefectDataset
+from .dataset import TunnelDefectDataset, collect_enhanced_pairs
 from loguru import logger
 
 
@@ -58,6 +58,9 @@ class SegmentationDataLoaderFactory:
         persistent_workers: bool = True,
         aug_kwargs: Optional[dict] = None,
         splits: Optional[List[str]] = None,
+        use_skeleton: bool = False,
+        skel_dir: Optional[str] = None,
+        enhanced_root: Optional[str] = None,
     ):
         if isinstance(data_roots, str):
             data_roots = [data_roots]
@@ -67,6 +70,8 @@ class SegmentationDataLoaderFactory:
         self.input_size  = input_size
         self.aug_kwargs  = aug_kwargs or {}
         self.splits      = splits or ["train", "val", "test"]
+        self.use_skeleton = use_skeleton
+        self.skel_dir     = skel_dir
 
         # 自动检测 pin_memory
         if pin_memory is None:
@@ -75,6 +80,9 @@ class SegmentationDataLoaderFactory:
 
         # persistent_workers 只在 num_workers>0 时有意义
         self.persistent_workers = persistent_workers and (num_workers > 0)
+
+        # 预先收集增强数据对（仅加入 train split）
+        _enhanced_pairs = collect_enhanced_pairs(enhanced_root) if enhanced_root else []
 
         # 构建各 split 的 Dataset
         self.datasets: Dict[str, TunnelDefectDataset] = {}
@@ -88,10 +96,16 @@ class SegmentationDataLoaderFactory:
                 input_size=input_size,
                 **self.aug_kwargs,
             )
+            # 骨架掩码仅对 train split 启用
+            _skel = self.skel_dir if (use_skeleton and split == "train") else None
+            # 增强数据仅追加到 train split
+            _extra = _enhanced_pairs if split == "train" else []
             ds = TunnelDefectDataset(
                 data_roots=self.data_roots,
                 split=split,
                 augmentation=aug,
+                skel_dir=_skel,
+                extra_pairs=_extra or None,
             )
             self.datasets[split] = ds
             self._loaders[split] = self._make_loader(ds, split)
@@ -165,6 +179,9 @@ def build_dataloaders(
     pin_memory: Optional[bool] = None,
     splits: Optional[List[str]] = None,
     aug_kwargs: Optional[dict] = None,
+    use_skeleton: bool = False,
+    skel_dir: Optional[str] = None,
+    enhanced_root: Optional[str] = None,
 ) -> Dict[str, DataLoader]:
     """一行代码获取所有 split 的 DataLoader 字典。"""
     factory = SegmentationDataLoaderFactory(
@@ -175,5 +192,8 @@ def build_dataloaders(
         pin_memory=pin_memory,
         aug_kwargs=aug_kwargs,
         splits=splits or ["train", "val", "test"],
+        use_skeleton=use_skeleton,
+        skel_dir=skel_dir,
+        enhanced_root=enhanced_root,
     )
     return {split: factory.get(split) for split in factory.splits}

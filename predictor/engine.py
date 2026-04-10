@@ -5,6 +5,7 @@ from pathlib import Path
 import numpy as np
 import torch
 from loguru import logger
+from PIL import Image
 
 from criteria import SegEvaluator
 from dataload import CLASS_COLORS, CLASS_NAMES, NUM_CLASSES
@@ -19,6 +20,7 @@ from utils.segmentor_loader import (
 from utils.segmentation_vis import blend_overlay, colorize_mask
 
 from .config import PredictConfig
+from .tiling import tiled_predict
 from .visuals import (
     build_error_overlay,
     infer_mask_path,
@@ -28,6 +30,7 @@ from .visuals import (
     save_outputs_basic,
     save_outputs_with_gt,
 )
+from dataload import CLASS_COLORS as _DEFAULT_CLASS_COLORS
 
 
 class ImagePredictor:
@@ -95,10 +98,17 @@ class ImagePredictor:
         class_names = get_class_names_from_checkpoint(ckpt, default=CLASS_NAMES)
         logger.info(f"推理输入尺寸: {input_size}")
 
-        image_np, input_tensor = preprocess_image(image_path, input_size=input_size)
-        logits = model(input_tensor.unsqueeze(0).to(device))
-        pred = logits.argmax(dim=1).squeeze(0).detach().cpu().numpy().astype(np.uint8)
-        pred = postprocess_mask(pred, original_hw=image_np.shape[:2])
+        image_np = np.array(Image.open(image_path).convert("RGB"), dtype=np.uint8)
+        num_classes = int(model_cfg.get("num_classes", NUM_CLASSES))
+
+        if cfg.use_tiling:
+            logger.info("使用 Tiling 推理（高斯加权拼合）")
+            pred = tiled_predict(model, image_np, device, num_classes, input_size)
+        else:
+            _, input_tensor = preprocess_image(image_path, input_size=input_size)
+            logits = model(input_tensor.unsqueeze(0).to(device))
+            pred = logits.argmax(dim=1).squeeze(0).detach().cpu().numpy().astype(np.uint8)
+            pred = postprocess_mask(pred, original_hw=image_np.shape[:2])
 
         pred_color = colorize_mask(pred, CLASS_COLORS)
         pred_overlay = blend_overlay(image_np, pred_color, alpha=0.45)
@@ -110,6 +120,17 @@ class ImagePredictor:
             gt_overlay = blend_overlay(image_np, gt_color, alpha=0.45)
             error_overlay = build_error_overlay(image_np, pred, gt_mask)
 
+            metric = self._compute_single_image_metrics(
+                pred,
+                gt_mask,
+                num_classes=num_classes,
+                class_names=class_names,
+            )
+            present_mask = np.bincount(
+                gt_mask[gt_mask != 255].ravel(),
+                minlength=num_classes,
+            ).astype(bool)
+
             save_outputs_with_gt(
                 image_path=image_path,
                 out_dir=out_dir,
@@ -119,16 +140,14 @@ class ImagePredictor:
                 pred_color_mask=pred_color,
                 pred_overlay=pred_overlay,
                 error_overlay=error_overlay,
-            )
-
-            metric = self._compute_single_image_metrics(
-                pred,
-                gt_mask,
-                num_classes=int(model_cfg.get("num_classes", NUM_CLASSES)),
                 class_names=class_names,
+                class_colors=_DEFAULT_CLASS_COLORS,
+                per_class_iou=metric["IoU"],
+                present_mask=present_mask,
+                pred_raw_mask=pred,
             )
             logger.info(
-                f"单图指标: IoU={metric['mIoU']*100:.2f}%  Accuracy={metric['aAcc']*100:.2f}%"
+                f"单图指标: mIoU={metric['mIoU']*100:.2f}%  Accuracy={metric['aAcc']*100:.2f}%"
             )
         else:
             save_outputs_basic(
@@ -137,6 +156,8 @@ class ImagePredictor:
                 image=image_np,
                 pred_color_mask=pred_color,
                 pred_overlay=pred_overlay,
+                class_names=class_names,
+                class_colors=_DEFAULT_CLASS_COLORS,
             )
             logger.warning("未找到对应 GT mask，跳过 IoU/Accuracy 计算（可在 RUN.mask 显式指定）")
 
