@@ -25,13 +25,13 @@ from trainer import SegmentationTrainer, TrainConfig
 RUN = TrainConfig(
     # ── 路径 ──────────────────────────────────────────────────────────────────
     data_root            = "dataset/tongji_data_awesome",   # 数据集根目录，需含 img_dir/ 和 ann_dir/
-    output_dir           = "outputs/train_run",     # 训练输出目录，存放 best.pth / last.pth / train.log
+    output_dir           = "outputs/train_run_awesome",     # 训练输出目录，存放 best.pth / last.pth / train.log
     backbone_type        = "convnext_tiny",         # 骨干类型："convnext_tiny" | "vit_s16plus"
     backbone_weight_path = "dinov3_convnext_tiny_pretrain_lvd1689m-21b726bb.pth",  # DINOv3 预训练权重路径；None = 随机初始化
 
     # ── 运行控制 ─────────────────────────────────────────────────────────────
     device   = "auto",   # 计算设备："auto"（优先 CUDA）/ "cuda" / "cpu" / "mps"
-    resume   = "",       # 断点续训路径（填 last.pth 路径）；空字符串 = 从头训练
+    resume   = "outputs/train_run_awesome/last.pth",       # 断点续训路径（填 last.pth 路径）；空字符串 = 从头训练
     dry_run  = False,    # True = 仅验证数据/模型/损失初始化是否正常，不执行训练循环
     seed     = 42,       # 随机种子，控制数据增强与权重初始化的可复现性
 
@@ -40,7 +40,7 @@ RUN = TrainConfig(
     head_type     = "uper",       # 解码头类型："uper"（UPerHead，精度高）/ "mlp"（MLPHead，参数少）
     head_channels = 160,          # 解码头内部通道宽度；越大精度越高但显存/参数量增加
                                   # UPerHead 参考值：128≈0.6M / 160≈0.9M / 256≈2.2M / 512≈8.0M
-    frozen_stages = 1,            # 冻结 backbone 前 N 个 stage（0=不冻结，1=冻结 stem+stage0，-1=全冻结）
+    frozen_stages = -1,            # 冻结 backbone 前 N 个 stage（0=不冻结，1=冻结 stem+stage0，-1=全冻结）
                                   # 数据少时建议 1~2，数据充足时建议 0
 
     # ── 数据 ─────────────────────────────────────────────────────────────────
@@ -64,7 +64,8 @@ RUN = TrainConfig(
                                    # 类别极度不均衡时开启；会遍历全部 mask 文件，耗时约数秒
 
     # ── 训练超参数 ───────────────────────────────────────────────────────────
-    epochs           = 80,      # 总训练轮数（use_tmds=True 时由 stage_epochs 决定）
+    epochs           = 100,      # 总训练轮数（use_tmds=True 时由 stage_epochs 决定）
+    max_steps        = 1200,    # 最大训练步数（优先级高于 epochs）；0 = 不限制
     base_lr          = 2e-4,    # 解码头的初始学习率；骨干 LR = base_lr × backbone_lr_mult
     backbone_lr_mult = 0.05,    # 骨干学习率相对于 base_lr 的倍率；建议 0.01~0.1
     weight_decay     = 1e-2,    # AdamW/SGD 的 L2 正则化系数；bias 和 Norm 层不受此影响
@@ -72,7 +73,7 @@ RUN = TrainConfig(
     warmup_epochs    = 1,       # 学习率从 0 线性升至 base_lr 所需的 epoch 数
     scheduler        = "cosine",# 学习率调度策略："cosine" / "poly" / "step"
     clip_grad        = 1.0,     # 梯度裁剪阈值（max_norm）；0 = 不裁剪
-    val_interval     = 1,       # 每隔多少 epoch 做一次验证；增大可加快训练但减少 checkpoint 机会
+    val_interval     = 5,       # 每隔多少 epoch 做一次验证；增大可加快训练但减少 checkpoint 机会
     use_amp          = True,    # True = 启用自动混合精度（FP16）训练，仅 CUDA 生效
 )
 
@@ -85,7 +86,7 @@ RUN = TrainConfig(
 TMDS_RUN = TrainConfig(
     # ── 路径 ──────────────────────────────────────────────────────────────────
     data_root            = "dataset/tongji_data_awesome",
-    output_dir           = "outputs/tmds_run_awesome1",
+    output_dir           = "outputs/tmds_run_awesome",
     backbone_type        = "convnext_tiny",           # 骨干类型："convnext_tiny" | "vit_s16plus"
     backbone_weight_path = "dinov3_convnext_tiny_pretrain_lvd1689m-21b726bb.pth",
 
@@ -93,11 +94,11 @@ TMDS_RUN = TrainConfig(
     device  = "auto",
     seed    = 42,
     dry_run = False,
-    resume  = "outputs/tmds_run_awesome1/last.pth",
+    resume  = "",
 
     # ── 模型结构 ─────────────────────────────────────────────────────────────
     num_classes   = NUM_CLASSES,
-    head_channels = 160,          # TMDS 建议 256（MRM/DSA/CMIM 通道宽度）
+    head_channels = 128,          # TMDS 建议 128（MRM/DSA/CMIM 通道宽度）
     use_tmds      = True,         # ← 关键开关：使用 TMDSSegmentor
 
     # DSA 解码器超参数（通常无需调整）
@@ -111,18 +112,20 @@ TMDS_RUN = TrainConfig(
     num_workers = 2,
 
     use_enhanced_data  = False,                   # True = 将 dataset/data_enhanced 追加进训练集
-    enhanced_data_root = "dataset/data_enhanced", # 增强数据目录（use_enhanced_data=True 时生效）
+    enhanced_data_root = "", # 增强数据目录（use_enhanced_data=True 时生效）
 
-    # ── 三阶段训练（总 epoch = 20+100+60 = 180）───────────────────────────────
+    # ── 三阶段训练（总 epoch = 20+30+50 = 100）───────────────────────────────
     # stage_epochs 三元组各对应一个阶段的 epoch 数
-    stage_epochs        = (20, 100, 60),
-    max_steps=2500,
-    # stage_frozen_stages：-1=全冻结, 2=冻结前两个stage, 1=仅冻结stem+stage0
-    stage_frozen_stages = (1, -1, -1),
+    stage_epochs        = (20, 30, 50),
+    max_steps=1000,
+    # stage_frozen_stages：-1=全冻结, 1=仅冻结stem+stage0, 0=全解冻
+    # 渐进解冻：头部先在稳定预训练特征上收敛，再逐步放开骨干
+    stage_frozen_stages = (-1, 1, 0),
     # 各阶段 base_lr（解码头学习率）
-    stage_base_lrs      = (8e-4, 6e-4, 4e-4),
+    stage_base_lrs      = (1e-3, 6e-4, 2e-4),
     # 各阶段损失组合（第三阶段额外叠加 skeleton）
     stage_loss_names    = ("dice+focal", "dice+focal", "dice+focal"),
+    routing_loss_weight = 0.5,
 
     # ── TMDS 辅助损失权重 ─────────────────────────────────────────────────────
     aux_loss_weight      = 0.4,   # 线型/面型辅助输出各自的损失系数

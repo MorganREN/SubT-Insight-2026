@@ -47,7 +47,7 @@ TMDS_RUN = InferConfig(
 
 # ── 原始分辨率数据集评估（tongji_data_raw，tiling 推理）────────────────────────
 RAW_RUN = InferConfig(
-    ckpt="outputs/tmds_run_awesome1/best.pth",
+    ckpt="outputs/tmds_run_awesome/best.pth",
     data_root="dataset/tongji_data_raw",
     split="valid",
     device="auto",

@@ -67,5 +67,10 @@ class TrainConfig:
     skeleton_loss_weight: float = 1.0   # 骨架损失权重（Stage3 且 use_skeleton_loss=True 时启用）
     use_skeleton_loss:    bool  = False  # 须先运行 tools/precompute_skeletons.py
 
+    # 路由损失（修复 MRM 路由塌缩）
+    # > 0 时启用 GT 监督路由损失：裂缝像素→α→1，面型病害像素→α→0
+    # 推荐值 0.1；设为 0.0 禁用（向后兼容，不影响已有实验）
+    routing_loss_weight:  float = 0.0
+
     # ── 调试 ─────────────────────────────────────────────────────────────────
     max_steps: int = 0   # >0 = 每个 epoch 最多跑多少 step（0=不限）；用于快速验证
