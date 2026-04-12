@@ -20,61 +20,51 @@ from trainer import SegmentationTrainer, TrainConfig
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 标准训练配置（TunnelSegmentor，use_tmds=False）
-# 如需切换 TMDS，将 use_tmds=True 并参考下方 TMDS_RUN 注释块。
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 RUN = TrainConfig(
     # ── 路径 ──────────────────────────────────────────────────────────────────
-    data_root            = "dataset/tongji_data_awesome",   # 数据集根目录，需含 img_dir/ 和 ann_dir/
-    output_dir           = "outputs/train_run_awesome",     # 训练输出目录，存放 best.pth / last.pth / train.log
-    backbone_type        = "convnext_tiny",         # 骨干类型："convnext_tiny" | "vit_s16plus"
-    backbone_weight_path = "dinov3_convnext_tiny_pretrain_lvd1689m-21b726bb.pth",  # DINOv3 预训练权重路径；None = 随机初始化
+    data_root            = "dataset/tongji_data_awesome",
+    output_dir           = "outputs/train_run_awesome",
+    backbone_type        = "convnext_tiny",         # "convnext_tiny" | "vit_s16plus"
+    backbone_weight_path = "dinov3_convnext_tiny_pretrain_lvd1689m-21b726bb.pth",
 
     # ── 运行控制 ─────────────────────────────────────────────────────────────
-    device   = "auto",   # 计算设备："auto"（优先 CUDA）/ "cuda" / "cpu" / "mps"
-    resume   = "outputs/train_run_awesome/last.pth",       # 断点续训路径（填 last.pth 路径）；空字符串 = 从头训练
-    dry_run  = False,    # True = 仅验证数据/模型/损失初始化是否正常，不执行训练循环
-    seed     = 42,       # 随机种子，控制数据增强与权重初始化的可复现性
+    device   = "auto",
+    resume   = "",
+    dry_run  = False,
+    seed     = 42,
 
     # ── 模型结构 ─────────────────────────────────────────────────────────────
-    num_classes   = NUM_CLASSES,  # 分割类别数（含背景），与数据集标注一致，通常不需要修改
-    head_type     = "uper",       # 解码头类型："uper"（UPerHead，精度高）/ "mlp"（MLPHead，参数少）
-    head_channels = 160,          # 解码头内部通道宽度；越大精度越高但显存/参数量增加
-                                  # UPerHead 参考值：128≈0.6M / 160≈0.9M / 256≈2.2M / 512≈8.0M
-    frozen_stages = -1,            # 冻结 backbone 前 N 个 stage（0=不冻结，1=冻结 stem+stage0，-1=全冻结）
-                                  # 数据少时建议 1~2，数据充足时建议 0
+    num_classes   = NUM_CLASSES,
+    head_type     = "mlp",       # "uper"（UPerHead，精度高）/ "mlp"（MLPHead，参数少）
+    head_channels = 128,          # UPerHead 参考值：128≈0.6M / 160≈0.9M / 256≈2.2M
 
     # ── 数据 ─────────────────────────────────────────────────────────────────
-    input_size  = 512,  # 模型输入的正方形边长（像素）；训练/推理需保持一致
-                        # 参考值：256（快速实验）/ 384（默认）/ 512（高精度，显存需求翻倍）
-    batch_size  = 4,    # 每个训练 step 的样本数；显存不足时减小，建议保持 ≥ 2
-    num_workers = 2,    # DataLoader 并行加载的进程数；一般设为 CPU 核数的一半
-
-    use_enhanced_data  = False,                   # awesome 数据集本身已完成预处理，无需再追加
-    enhanced_data_root = "dataset/data_enhanced", # 增强数据目录（use_enhanced_data=True 时生效）
+    input_size  = 512,
+    batch_size  = 4,
+    num_workers = 2,
 
     # ── 损失函数 ─────────────────────────────────────────────────────────────
-    loss_name     = "dice+focal",  # 损失组合："ce" / "dice" / "focal" /
-                                   #           "ce+dice" / "ce+focal" / "dice+focal" /
-                                   #           "ce+dice+focal"
-                                   # 存在严重类别不均衡时推荐 "dice+focal" 或 "ce+dice"
-    loss_weights  = None,          # 各子损失的加权系数，None = 使用内置默认值
-                                   # 示例：loss_name="dice+focal" 时默认 (2.0, 1.0)
-                                   #        可覆盖为 (1.0, 1.0) 等均等权重
-    use_class_weights = True,     # True = 按像素频率自动计算类别权重传给 CE/Dice
-                                   # 类别极度不均衡时开启；会遍历全部 mask 文件，耗时约数秒
+    use_class_weights = True,
 
-    # ── 训练超参数 ───────────────────────────────────────────────────────────
-    epochs           = 100,      # 总训练轮数（use_tmds=True 时由 stage_epochs 决定）
-    max_steps        = 1200,    # 最大训练步数（优先级高于 epochs）；0 = 不限制
-    base_lr          = 2e-4,    # 解码头的初始学习率；骨干 LR = base_lr × backbone_lr_mult
-    backbone_lr_mult = 0.05,    # 骨干学习率相对于 base_lr 的倍率；建议 0.01~0.1
-    weight_decay     = 1e-2,    # AdamW/SGD 的 L2 正则化系数；bias 和 Norm 层不受此影响
-    optimizer_type   = "adamw", # 优化器："adamw"（推荐）/ "adam" / "sgd"
-    warmup_epochs    = 1,       # 学习率从 0 线性升至 base_lr 所需的 epoch 数
-    scheduler        = "cosine",# 学习率调度策略："cosine" / "poly" / "step"
-    clip_grad        = 1.0,     # 梯度裁剪阈值（max_norm）；0 = 不裁剪
-    val_interval     = 5,       # 每隔多少 epoch 做一次验证；增大可加快训练但减少 checkpoint 机会
-    use_amp          = True,    # True = 启用自动混合精度（FP16）训练，仅 CUDA 生效
+    # ── 三阶段渐进解冻训练（总 epoch = 20+30+50 = 100）──────────────────────
+    use_stages           = True,
+    stage_epochs         = (20, 30, 50),
+    # -1=全冻结骨干, 1=仅冻结stem+stage0, 0=全解冻
+    stage_frozen_stages  = (-1, 1, 0),
+    # 各阶段解码头学习率；骨干 LR = base_lr × backbone_lr_mult
+    stage_base_lrs       = (1e-3, 6e-4, 2e-4),
+    stage_loss_names     = ("dice+focal", "dice+focal", "dice+focal"),
+
+    # ── 通用训练超参数 ────────────────────────────────────────────────────────
+    max_steps        = 0,         # >0 = 每 epoch 最多跑多少 step，用于快速调试
+    backbone_lr_mult = 0.05,      # 骨干 LR 倍率；数据充足时可适当增大
+    weight_decay     = 1e-2,
+    optimizer_type   = "adamw",
+    scheduler        = "cosine",
+    clip_grad        = 1.0,
+    val_interval     = 5,
+    use_amp          = True,
 )
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -110,9 +100,6 @@ TMDS_RUN = TrainConfig(
     input_size  = 512,
     batch_size  = 2,
     num_workers = 2,
-
-    use_enhanced_data  = False,                   # True = 将 dataset/data_enhanced 追加进训练集
-    enhanced_data_root = "", # 增强数据目录（use_enhanced_data=True 时生效）
 
     # ── 三阶段训练（总 epoch = 20+30+50 = 100）───────────────────────────────
     # stage_epochs 三元组各对应一个阶段的 epoch 数

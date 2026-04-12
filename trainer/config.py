@@ -39,9 +39,8 @@ class TrainConfig:
     val_interval: int = 1
     use_amp: bool = True
 
-    # ── 增强数据 ─────────────────────────────────────────────────────────────
-    use_enhanced_data:    bool = False                         # True = 将 data_enhanced 追加到 train
-    enhanced_data_root:   str  = "dataset/data_enhanced"      # 增强数据根目录
+    # ── 三阶段训练开关（use_tmds=True 时自动启用；标准模型需显式设置）──────────
+    use_stages: bool = False        # True = TunnelSegmentor 也使用三阶段渐进解冻训练
 
     # ── TMDS 专属配置（use_tmds=False 时以下字段全部忽略）────────────────────
     use_tmds: bool = False          # True = 使用 TMDSSegmentor 替换 TunnelSegmentor

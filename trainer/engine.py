@@ -20,7 +20,7 @@ from utils.scheduler import build_scheduler, log_lr
 from utils.feishu import send_eval_result, send_training_done
 
 from .config import TrainConfig
-from .loss_factory import TMDSCriterion, build_loss, build_tmds_criterion
+from .loss_factory import TMDSCriterion, build_loss, build_stage_loss, build_tmds_criterion
 
 
 class SegmentationTrainer:
@@ -77,7 +77,7 @@ class SegmentationTrainer:
 
     def _enter_stage(
         self,
-        model: TMDSSegmentor,
+        model: nn.Module,
         stage: int,
         class_weights: Optional[torch.Tensor],
         device: torch.device,
@@ -87,7 +87,7 @@ class SegmentationTrainer:
 
         Returns
         -------
-        (optimizer, scheduler, criterion, stage_total_epochs)
+        (optimizer, scheduler, criterion)
         """
         cfg = self.cfg
         frozen = cfg.stage_frozen_stages[stage]
@@ -99,7 +99,7 @@ class SegmentationTrainer:
             f"━━━ 进入 Stage {stage + 1}/3 ━━━  "
             f"frozen_stages={frozen}  base_lr={stage_lr:.1e}  "
             f"epochs={stage_ep}  loss={cfg.stage_loss_names[stage]}"
-            + ("+skel" if (stage == 2 and cfg.use_skeleton_loss) else "")
+            + ("+skel" if (stage == 2 and cfg.use_tmds and cfg.use_skeleton_loss) else "")
         )
 
         optimizer = build_optimizer(
@@ -115,7 +115,15 @@ class SegmentationTrainer:
             total_epochs=stage_ep,
             warmup_epochs=min(2, stage_ep // 10),
         )
-        criterion = build_tmds_criterion(cfg, stage, class_weights, device)
+        if cfg.use_tmds:
+            criterion = build_tmds_criterion(cfg, stage, class_weights, device)
+        else:
+            criterion = build_stage_loss(
+                cfg.stage_loss_names[stage],
+                num_classes=cfg.num_classes,
+                class_weights=class_weights,
+                device=device,
+            )
         return optimizer, scheduler, criterion
 
     # ──────────────────────────────────────────────────────────────────────────
@@ -254,8 +262,9 @@ class SegmentationTrainer:
         out_dir.mkdir(parents=True, exist_ok=True)
         setup_logger(str(out_dir / "train.log"))
 
+        _stage_mode = "TMDS 三阶段" if cfg.use_tmds else ("三阶段" if cfg.use_stages else "")
         logger.info("=" * 70)
-        logger.info("语义分割训练启动" + ("（TMDS 三阶段）" if cfg.use_tmds else ""))
+        logger.info("语义分割训练启动" + (f"（{_stage_mode}）" if _stage_mode else ""))
         logger.info("=" * 70)
         logger.info(f"输出目录: {out_dir.resolve()}")
         logger.info(f"配置: {asdict(cfg)}")
@@ -265,12 +274,12 @@ class SegmentationTrainer:
         if cfg.use_amp and not use_amp:
             logger.warning("AMP 当前仅在 CUDA 下启用，已自动关闭")
 
-        # ── 若使用 TMDS，总 epoch = sum(stage_epochs) ──
-        if cfg.use_tmds:
+        # ── 三阶段模式：总 epoch = sum(stage_epochs) ──
+        if cfg.use_tmds or cfg.use_stages:
             total_epochs = sum(cfg.stage_epochs)
             if total_epochs != cfg.epochs:
                 logger.info(
-                    f"TMDS 模式：total epochs 由 stage_epochs {cfg.stage_epochs} "
+                    f"三阶段模式：total epochs 由 stage_epochs {cfg.stage_epochs} "
                     f"决定，设为 {total_epochs}（原 cfg.epochs={cfg.epochs} 已忽略）"
                 )
             cfg.epochs = total_epochs  # 就地更新，只影响本次 run
@@ -283,7 +292,6 @@ class SegmentationTrainer:
             input_size=cfg.input_size,
             splits=["train", "val"],
             use_skeleton=cfg.use_tmds and cfg.use_skeleton_loss,
-            enhanced_root=cfg.enhanced_data_root if cfg.use_enhanced_data else None,
         )
         train_loader = loaders["train"]
         val_loader   = loaders["val"]
@@ -325,8 +333,8 @@ class SegmentationTrainer:
         scaler    = GradScaler("cuda", enabled=use_amp)
         evaluator = SegEvaluator(num_classes=cfg.num_classes, class_names=CLASS_NAMES)
 
-        if cfg.use_tmds:
-            # TMDS：在 run 循环内按阶段动态初始化，此处先置 None
+        if cfg.use_tmds or cfg.use_stages:
+            # 三阶段模式：在 run 循环内按阶段动态初始化，此处先置 None
             optimizer  = None
             scheduler  = None
             criterion  = None
@@ -356,7 +364,7 @@ class SegmentationTrainer:
         _resume_opt_sd  = None   # 待注入的 optimizer state_dict
         _resume_sch_sd  = None   # 待注入的 scheduler state_dict
         if cfg.resume:
-            if cfg.use_tmds:
+            if cfg.use_tmds or cfg.use_stages:
                 ckpt = load_checkpoint_compat(cfg.resume, map_location=device)
                 state_dict = ckpt["model"] if "model" in ckpt else ckpt
                 model.load_state_dict(state_dict)
@@ -365,7 +373,7 @@ class SegmentationTrainer:
                 _resume_opt_sd  = ckpt.get("optimizer")
                 _resume_sch_sd  = ckpt.get("scheduler")
                 logger.info(
-                    f"TMDS 断点续训自 epoch={start_epoch - 1}，"
+                    f"三阶段断点续训自 epoch={start_epoch - 1}，"
                     f"best_mIoU={best_miou:.4f}；"
                     f"optimizer/scheduler 将在首次进入阶段后恢复"
                 )
@@ -401,8 +409,8 @@ class SegmentationTrainer:
 
         for epoch in range(start_epoch, cfg.epochs + 1):
 
-            # ── TMDS 阶段切换检测 ──
-            if cfg.use_tmds:
+            # ── 三阶段切换检测 ──
+            if cfg.use_tmds or cfg.use_stages:
                 new_stage = self._get_stage(epoch, cfg.stage_epochs)
                 if new_stage != current_stage:
                     current_stage    = new_stage

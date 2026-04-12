@@ -81,6 +81,22 @@ def _build_combined_loss(
 # 标准损失（TunnelSegmentor）
 # ──────────────────────────────────────────────────────────────────────────────
 
+def build_stage_loss(
+    stage_loss_name: str,
+    num_classes: int,
+    class_weights: Optional[torch.Tensor] = None,
+    device: Optional[torch.device] = None,
+) -> CombinedLoss:
+    """构建分阶段 CombinedLoss，供 TunnelSegmentor 三阶段训练使用。"""
+    return _build_combined_loss(
+        loss_name=stage_loss_name,
+        num_classes=num_classes,
+        class_weights=class_weights,
+        loss_weights=None,
+        device=device,
+    )
+
+
 def build_loss(
     cfg: TrainConfig,
     class_weights: Optional[torch.Tensor] = None,

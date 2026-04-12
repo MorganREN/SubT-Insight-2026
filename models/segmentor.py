@@ -88,6 +88,11 @@ class TunnelSegmentor(nn.Module):
             f"  总参数:    {total_params:.1f}M (可训练: {trainable_params:.1f}M)"
         )
 
+    def set_frozen_stages(self, frozen_stages: int):
+        """动态更新 backbone 冻结阶段数（三阶段训练时调用）。"""
+        self.backbone.set_frozen_stages(frozen_stages)
+        logger.info(f"Backbone frozen_stages 更新为: {frozen_stages}")
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         前向传播: 图像 → 分割 logits。
