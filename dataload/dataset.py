@@ -62,51 +62,6 @@ NUM_CLASSES: int = len(CLASS_NAMES)
 # 辅助函数
 # ──────────────────────────────────────────────────────────────────────────────
 
-def collect_enhanced_pairs(
-    enhanced_root: str | Path,
-) -> List[Tuple[Path, Path, Optional[Path]]]:
-    """
-    扫描 data_enhanced 的平铺目录结构，收集 (img_path, mask_path, None) 三元组。
-
-    约定
-    ----
-    增强数据目录下每个类别含两个子目录：
-        ``{X} img/``   ←  RGB 图像 (.jpg)
-        ``{X} mask/``  ←  灰度掩码 (.png)，像素值与主数据集类别 ID 一致
-    img 目录名中的 "carack" 拼写错误会自动匹配到对应 mask 目录。
-    增强数据无骨架文件，故第三元素始终为 None。
-    """
-    root = Path(enhanced_root)
-    if not root.exists():
-        logger.warning(f"增强数据目录不存在，跳过: {root}")
-        return []
-
-    pairs: List[Tuple[Path, Path, Optional[Path]]] = []
-
-    for img_dir in sorted(root.iterdir()):
-        if not img_dir.is_dir() or not img_dir.name.endswith(" img"):
-            continue
-
-        # 先按原名找 mask 目录，再尝试修正 carack→crack 拼写
-        base_name = img_dir.name[:-4]  # strip " img"
-        mask_dir = root / f"{base_name} mask"
-        if not mask_dir.exists():
-            mask_dir = root / f"{base_name.replace('carack', 'crack')} mask"
-        if not mask_dir.exists():
-            logger.warning(f"增强数据找不到对应 mask 目录: {img_dir.name}")
-            continue
-
-        for img_path in sorted(img_dir.glob("*.jpg")):
-            mask_path = mask_dir / f"{img_path.stem}.png"
-            if not mask_path.exists():
-                logger.warning(f"增强数据缺少 mask，跳过: {img_path.name}")
-                continue
-            pairs.append((img_path, mask_path, None))
-
-    logger.info(f"collect_enhanced_pairs: {len(pairs)} 个增强样本 ← {root}")
-    return pairs
-
-
 def _collect_pairs(
     data_root: str | Path,
     split: str,
@@ -199,7 +154,6 @@ class TunnelDefectDataset(Dataset):
         image_suffix:  str = ".jpg",
         mask_suffix:   str = ".png",
         ignore_index:  int = 255,
-        extra_pairs:   Optional[List[Tuple[Path, Path, Optional[Path]]]] = None,
     ):
         # 统一转 list
         if isinstance(data_roots, (str, Path)):
@@ -223,11 +177,6 @@ class TunnelDefectDataset(Dataset):
                 f"[{split}] {root.name}: {len(new_pairs)} 个样本"
             )
             self.pairs.extend(new_pairs)
-
-        # 追加外部传入的增强数据对（如 data_enhanced，无骨架）
-        if extra_pairs:
-            self.pairs.extend(extra_pairs)
-            logger.info(f"[{split}] +{len(extra_pairs)} 个增强样本（extra_pairs）")
 
         self.has_skeleton: bool = any(p[2] is not None for p in self.pairs)
 
