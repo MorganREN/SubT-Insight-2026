@@ -197,9 +197,11 @@ class TMDSSegmentor(nn.Module):
             if isinstance(self.backbone, DINOv3ViTS16Plus)
             else "DINOv3 ConvNeXt-Tiny"
         )
+        _stage_label = {0: "C1/H4", 1: "C2/H8", 2: "C3/H16", 3: "C4/H32"}
         logger.info(
             f"TMDSSegmentor 初始化完成:\n"
             f"  Backbone:  {bb_name} ({bb:.1f}M)\n"
+            f"  MRM stage: [{self.mrm_stage_idx}] {_stage_label[self.mrm_stage_idx]}\n"
             f"  Decoders:  MRM + DSA + Areal + CMIM ({dec:.1f}M)\n"
             f"  总参数:    {bb + dec:.1f}M  (可训练: {trainable:.1f}M)"
         )
