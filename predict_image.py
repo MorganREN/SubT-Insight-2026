@@ -18,13 +18,13 @@ from predictor import ImagePredictor, PredictConfig
 
 
 RUN = PredictConfig(
-    image="dataset/tongji_data_raw/img_dir/valid/L269.jpg",
+    image="/home/uqmren2/projects/SubT-Insight-2026/dataset/tongji_data_awesome/img_dir/valid/ES6_r004_c003.jpg",
     mask="",
-    ckpt="outputs/tmds_run_awesome1/best.pth",            # 留空 = 自动选 outputs/ 下最新 checkpoint
+    ckpt="outputs/quantized_tmds_run/model_int8.pth",            # 留空 = 自动选 outputs/ 下最新 checkpoint
     device="auto",      # auto / cuda / cpu
-    output_dir="outputs/tmds_run_awesome1",
+    output_dir="outputs/quantized_tmds_run",
     input_size=None,
-    use_tiling=True
+    use_tiling=False,   # 是否使用 tiling 推理（适用于超大图，输出与 GT 在原始分辨率对齐）
 )
 
 

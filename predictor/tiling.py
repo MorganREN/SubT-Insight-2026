@@ -83,17 +83,19 @@ def tiled_predict(
     device: torch.device,
     num_classes: int,
     input_size: int = 512,
+    patch_batch_size: int = 4,
 ) -> np.ndarray:
     """
     对原图做 tiling 推理，返回原图尺寸的预测 mask。
 
     Parameters
     ----------
-    model       : 已 eval() 且在 device 上的模型
-    image_np    : H×W×3 uint8 原始图像
-    device      : 推理设备
-    num_classes : 类别数
-    input_size  : 模型输入边长（默认 512）
+    model            : 已 eval() 且在 device 上的模型
+    image_np         : H×W×3 uint8 原始图像
+    device           : 推理设备
+    num_classes      : 类别数
+    input_size       : 模型输入边长（默认 512）
+    patch_batch_size : 每次 forward 合并的 patch 数（CPU 推理建议 4-8）
 
     Returns
     -------
@@ -107,18 +109,9 @@ def tiled_predict(
     if params is None:
         tensor = _patch_to_tensor(image_np, input_size).unsqueeze(0).to(device)
         logits = model(tensor)
-        prob = F.softmax(logits.float(), dim=1).squeeze(0)          # (C, input_size, input_size)
-        prob_np = prob.cpu().numpy().transpose(1, 2, 0)              # (input_size, input_size, C)
-        # 反 resize 到原图尺寸
-        prob_full = np.array(
-            Image.fromarray(
-                prob_np.reshape(input_size * input_size, num_classes).astype(np.float32)
-            ).resize((W, H), Image.BILINEAR)
-        )  # 此路径改用 F.interpolate 更干净
-        # 用 torch interpolate 准确反 resize
-        prob_t = torch.from_numpy(prob_np.transpose(2, 0, 1)).unsqueeze(0)  # (1, C, h, w)
+        prob_t = F.softmax(logits.float(), dim=1)                    # (1, C, is, is)
         prob_full_t = F.interpolate(prob_t, size=(H, W), mode="bilinear", align_corners=False)
-        return prob_full_t.squeeze(0).argmax(dim=0).numpy().astype(np.uint8)
+        return prob_full_t.squeeze(0).argmax(dim=0).cpu().numpy().astype(np.uint8)
 
     patch_size, stride = params
 
@@ -131,37 +124,36 @@ def tiled_predict(
         image_pad = image_np
     PH, PW = image_pad.shape[:2]
 
-    # ── 概率累加矩阵（保存在 CPU，节省显存）────────────────────────────────────
-    prob_sum   = np.zeros((num_classes, PH, PW), dtype=np.float64)
-    weight_sum = np.zeros((PH, PW), dtype=np.float64)
-    gauss      = _make_gaussian_weight(patch_size).astype(np.float64)  # (ps, ps)
+    # ── 概率累加矩阵（float32 即可，节省内存和 CPU 运算）──────────────────────
+    prob_sum   = np.zeros((num_classes, PH, PW), dtype=np.float32)
+    weight_sum = np.zeros((PH, PW), dtype=np.float32)
+    gauss      = _make_gaussian_weight(patch_size)                   # already float32
 
-    # ── 逐 patch 推理 ─────────────────────────────────────────────────────────
+    # ── 预收集所有 patch 位置和 tensor，再按 batch 推理 ───────────────────────
+    positions: list[tuple[int, int]] = []
+    tensors:   list[torch.Tensor]    = []
     for y in range(0, PH - patch_size + 1, stride):
         for x in range(0, PW - patch_size + 1, stride):
-            patch = image_pad[y:y + patch_size, x:x + patch_size]  # (ps, ps, 3)
+            patch = image_pad[y:y + patch_size, x:x + patch_size]   # (ps, ps, 3)
+            positions.append((y, x))
+            tensors.append(_patch_to_tensor(patch, input_size))      # CHW float32
 
-            tensor = _patch_to_tensor(patch, input_size).unsqueeze(0).to(device)
-            logits = model(tensor)                                   # (1, C, input_size, input_size)
+    for i in range(0, len(tensors), patch_batch_size):
+        batch_t = torch.stack(tensors[i:i + patch_batch_size]).to(device)  # (B, C, is, is)
+        logits  = model(batch_t)                                      # (B, C, is, is)
+        prob_t  = F.softmax(logits.float(), dim=1)
+        prob_t  = F.interpolate(
+            prob_t, size=(patch_size, patch_size),
+            mode="bilinear", align_corners=False,
+        )                                                              # (B, C, ps, ps)
+        prob_np = prob_t.cpu().numpy()                                 # float32
 
-            # softmax 概率，反 resize 回 patch_size
-            prob_t = F.softmax(logits.float(), dim=1)               # (1, C, input_size, input_size)
-            prob_t = F.interpolate(
-                prob_t, size=(patch_size, patch_size),
-                mode="bilinear", align_corners=False,
-            )                                                        # (1, C, ps, ps)
-            prob_np = prob_t.squeeze(0).cpu().numpy().astype(np.float64)  # (C, ps, ps)
-
-            # 高斯加权累加
-            prob_sum[:, y:y + patch_size, x:x + patch_size]   += prob_np * gauss[np.newaxis]
+        for j, (y, x) in enumerate(positions[i:i + patch_batch_size]):
+            prob_sum[:, y:y + patch_size, x:x + patch_size]   += prob_np[j] * gauss[np.newaxis]
             weight_sum[y:y + patch_size, x:x + patch_size]    += gauss
 
     # ── 归一化 + argmax ────────────────────────────────────────────────────────
-    # weight_sum 中每个像素 > 0（至少被一个 patch 覆盖）
     weight_sum = np.maximum(weight_sum, 1e-8)
-    avg_prob = prob_sum / weight_sum[np.newaxis]                    # (C, PH, PW)
-
-    # 裁掉填充区域，还原到原图尺寸
-    avg_prob = avg_prob[:, :H, :W]                                  # (C, H, W)
-    pred_mask = avg_prob.argmax(axis=0).astype(np.uint8)            # (H, W)
-    return pred_mask
+    avg_prob   = prob_sum / weight_sum[np.newaxis]                    # (C, PH, PW)
+    avg_prob   = avg_prob[:, :H, :W]                                  # (C, H, W)
+    return avg_prob.argmax(axis=0).astype(np.uint8)                   # (H, W)

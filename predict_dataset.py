@@ -53,9 +53,9 @@ from predictor.visuals import (
 class BatchPredictConfig:
     img_root: str = "dataset/tongji_data_raw/img_dir"
     splits: list[str] = field(default_factory=lambda: ["valid"])  # 默认仅推理 valid split，修改为 ["train", "valid", "test"] 可全量推理
-    ckpt: str = "outputs/tmds_run_awesome1/best.pth"
+    ckpt: str = "outputs/tmds_run_awesome/best.pth"
     device: str = "auto"
-    output_dir: str = "outputs/tmds_run_awesome1/predict_dataset"
+    output_dir: str = "outputs/tmds_run_awesome/predict_dataset"
     input_size: int | None = None
     use_tiling: bool = True   # True = 对原图按群落参数做滑动窗口推理
 

@@ -39,9 +39,8 @@ class TrainConfig:
     val_interval: int = 1
     use_amp: bool = True
 
-    # ── 增强数据 ─────────────────────────────────────────────────────────────
-    use_enhanced_data:    bool = False                         # True = 将 data_enhanced 追加到 train
-    enhanced_data_root:   str  = "dataset/data_enhanced"      # 增强数据根目录
+    # ── 三阶段训练开关（use_tmds=True 时自动启用；标准模型需显式设置）──────────
+    use_stages: bool = False        # True = TunnelSegmentor 也使用三阶段渐进解冻训练
 
     # ── TMDS 专属配置（use_tmds=False 时以下字段全部忽略）────────────────────
     use_tmds: bool = False          # True = 使用 TMDSSegmentor 替换 TunnelSegmentor
@@ -66,6 +65,11 @@ class TrainConfig:
     aux_loss_weight:      float = 0.4   # linear_aux 和 areal_aux 损失各自乘以该系数
     skeleton_loss_weight: float = 1.0   # 骨架损失权重（Stage3 且 use_skeleton_loss=True 时启用）
     use_skeleton_loss:    bool  = False  # 须先运行 tools/precompute_skeletons.py
+
+    # 路由损失（修复 MRM 路由塌缩）
+    # > 0 时启用 GT 监督路由损失：裂缝像素→α→1，面型病害像素→α→0
+    # 推荐值 0.1；设为 0.0 禁用（向后兼容，不影响已有实验）
+    routing_loss_weight:  float = 0.0
 
     # ── 调试 ─────────────────────────────────────────────────────────────────
     max_steps: int = 0   # >0 = 每个 epoch 最多跑多少 step（0=不限）；用于快速验证

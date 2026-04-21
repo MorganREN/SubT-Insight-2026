@@ -47,7 +47,7 @@ TMDS_RUN = InferConfig(
 
 # ── 原始分辨率数据集评估（tongji_data_raw，tiling 推理）────────────────────────
 RAW_RUN = InferConfig(
-    ckpt="outputs/tmds_run_awesome1/best.pth",
+    ckpt="outputs/quantized_tmds_run/model_int8.pth",
     data_root="dataset/tongji_data_raw",
     split="valid",
     device="auto",
@@ -55,7 +55,7 @@ RAW_RUN = InferConfig(
     num_workers=0,
     save_vis=False,
     vis_count=0,
-    output_dir="outputs/infer_raw",
+    output_dir="outputs/quantized_infer_raw",
     use_tiling=True,     # 原图 tiling 推理，pred 与 GT 在原始分辨率下对比
 )
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import numpy as np
@@ -100,13 +101,20 @@ class ImagePredictor:
 
         image_np = np.array(Image.open(image_path).convert("RGB"), dtype=np.uint8)
         num_classes = int(model_cfg.get("num_classes", NUM_CLASSES))
+        file_size_kb = image_path.stat().st_size / 1024
+        H, W = image_np.shape[:2]
+        logger.info(f"图片信息: {W}×{H} px，磁盘大小 {file_size_kb:.1f} KB")
 
         if cfg.use_tiling:
             logger.info("使用 Tiling 推理（高斯加权拼合）")
+            t_start = time.perf_counter()
             pred = tiled_predict(model, image_np, device, num_classes, input_size)
+            infer_ms = (time.perf_counter() - t_start) * 1000
         else:
             _, input_tensor = preprocess_image(image_path, input_size=input_size)
+            t_start = time.perf_counter()
             logits = model(input_tensor.unsqueeze(0).to(device))
+            infer_ms = (time.perf_counter() - t_start) * 1000
             pred = logits.argmax(dim=1).squeeze(0).detach().cpu().numpy().astype(np.uint8)
             pred = postprocess_mask(pred, original_hw=image_np.shape[:2])
 
@@ -163,5 +171,7 @@ class ImagePredictor:
 
         logger.success("=" * 70)
         logger.success("单图推理完成")
-        logger.success(f"输出目录: {out_dir.resolve()}")
+        logger.success(f"  图片:     {image_path.name}  ({W}×{H} px，{file_size_kb:.1f} KB)")
+        logger.success(f"  推理耗时: {infer_ms:.1f} ms")
+        logger.success(f"  输出目录: {out_dir.resolve()}")
         logger.success("=" * 70)

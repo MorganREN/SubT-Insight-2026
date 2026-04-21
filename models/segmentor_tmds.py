@@ -276,5 +276,11 @@ class TMDSSegmentor(nn.Module):
             are_aux = _up(are_aux).to(orig_dtype)
 
         if self.training:
-            return {"main": main, "linear_aux": lin_aux, "areal_aux": are_aux}
+            # alpha 还原到 orig_dtype 一并返回；RoutingLoss 内部会转 float32
+            return {
+                "main":       main,
+                "linear_aux": lin_aux,
+                "areal_aux":  are_aux,
+                "alpha":      alpha.to(orig_dtype),   # [B,1,H/16,W/16]
+            }
         return main

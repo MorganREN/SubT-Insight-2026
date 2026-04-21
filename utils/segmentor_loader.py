@@ -205,13 +205,29 @@ def _build_quantized_segmentor_from_checkpoint(
     if device.type != "cpu":
         logger.warning("检测到量化模型，推理设备自动切换为 CPU。")
 
-    float_model = TunnelSegmentor(
-        num_classes=num_classes,
-        backbone_weight_path=backbone_weight_path,
-        head_type=head_type,
-        head_channels=head_channels,
-        frozen_stages=frozen_stages,
-    ).cpu().eval()
+    if cfg.get("use_tmds", False):
+        backbone_type        = cfg.get("backbone_type",        "convnext_tiny")
+        dsa_num_heads        = int(cfg.get("dsa_num_heads",        4))
+        dsa_num_strips       = int(cfg.get("dsa_num_strips",       4))
+        dsa_points_per_strip = int(cfg.get("dsa_points_per_strip", 8))
+        float_model = TMDSSegmentor(
+            num_classes=num_classes,
+            backbone_type=backbone_type,
+            backbone_weight_path=backbone_weight_path,
+            frozen_stages=-1,
+            head_channels=head_channels,
+            dsa_num_heads=dsa_num_heads,
+            dsa_num_strips=dsa_num_strips,
+            dsa_points_per_strip=dsa_points_per_strip,
+        ).cpu().eval()
+    else:
+        float_model = TunnelSegmentor(
+            num_classes=num_classes,
+            backbone_weight_path=backbone_weight_path,
+            head_type=head_type,
+            head_channels=head_channels,
+            frozen_stages=frozen_stages,
+        ).cpu().eval()
 
     torch.backends.quantized.engine = backend
     layer_names = ckpt.get("dynamic_layers", ["Linear"])
@@ -235,9 +251,18 @@ def _build_quantized_segmentor_from_checkpoint(
     q_model.load_state_dict(state_dict)
     q_model.eval()
 
-    logger.info(
-        f"量化模型恢复完成: mode={quant_mode}, backend={backend}, "
-        f"head_type={head_type}, num_classes={num_classes}, "
-        f"head_channels={head_channels}"
-    )
+    if cfg.get("use_tmds", False):
+        logger.info(
+            f"量化 TMDS 模型恢复完成: mode={quant_mode}, backend={backend}, "
+            f"backbone={backbone_type}, num_classes={num_classes}, "
+            f"head_channels={head_channels}, "
+            f"dsa_heads={dsa_num_heads}, strips={dsa_num_strips}, "
+            f"points={dsa_points_per_strip}"
+        )
+    else:
+        logger.info(
+            f"量化模型恢复完成: mode={quant_mode}, backend={backend}, "
+            f"head_type={head_type}, num_classes={num_classes}, "
+            f"head_channels={head_channels}"
+        )
     return q_model, cfg

@@ -21,7 +21,7 @@ from typing import Optional
 import torch
 import torch.nn as nn
 
-from criteria import CombinedLoss, SkeletonLoss
+from criteria import CombinedLoss, RoutingLoss, SkeletonLoss
 
 from .config import TrainConfig
 
@@ -81,6 +81,22 @@ def _build_combined_loss(
 # 标准损失（TunnelSegmentor）
 # ──────────────────────────────────────────────────────────────────────────────
 
+def build_stage_loss(
+    stage_loss_name: str,
+    num_classes: int,
+    class_weights: Optional[torch.Tensor] = None,
+    device: Optional[torch.device] = None,
+) -> CombinedLoss:
+    """构建分阶段 CombinedLoss，供 TunnelSegmentor 三阶段训练使用。"""
+    return _build_combined_loss(
+        loss_name=stage_loss_name,
+        num_classes=num_classes,
+        class_weights=class_weights,
+        loss_weights=None,
+        device=device,
+    )
+
+
 def build_loss(
     cfg: TrainConfig,
     class_weights: Optional[torch.Tensor] = None,
@@ -105,7 +121,8 @@ class TMDSCriterion(nn.Module):
     TMDS 联合损失。
 
     forward(outputs, masks, skel_masks=None) 接口：
-    - outputs 为 dict（训练模式）：分别计算 main / linear_aux / areal_aux 损失
+    - outputs 为 dict（训练模式）：分别计算 main / linear_aux / areal_aux /
+      routing（若启用）损失
     - outputs 为 Tensor（推理评估时调用）：仅计算 base 损失
 
     属性 last_components (dict) 记录上一次 forward 各项损失值，供日志使用。
@@ -117,12 +134,16 @@ class TMDSCriterion(nn.Module):
         aux_weight: float,
         skeleton_loss: Optional[SkeletonLoss] = None,
         skeleton_weight: float = 1.0,
+        routing_loss: Optional[RoutingLoss] = None,
+        routing_weight: float = 0.0,
     ):
         super().__init__()
         self.base_criterion  = base_criterion
         self.aux_weight      = aux_weight
         self.skeleton_loss   = skeleton_loss
         self.skeleton_weight = skeleton_weight
+        self.routing_loss    = routing_loss
+        self.routing_weight  = routing_weight
         self.last_components: dict[str, float] = {}
 
     def forward(
@@ -154,6 +175,13 @@ class TMDSCriterion(nn.Module):
             sl = self.skeleton_loss(main, skel_masks)
             loss = loss + self.skeleton_weight * sl
             self.last_components["skel"] = sl.item() * self.skeleton_weight
+
+        if self.routing_loss is not None and "alpha" in outputs:
+            # alpha 可能是 fp16（AMP 下），RoutingLoss 内部用 float32 计算 BCE
+            alpha = outputs["alpha"].float()
+            rl = self.routing_loss(alpha, masks)
+            loss = loss + self.routing_weight * rl
+            self.last_components["routing"] = rl.item() * self.routing_weight
 
         return loss
 
@@ -190,9 +218,19 @@ def build_tmds_criterion(
     if skeleton_loss is not None and device is not None:
         skeleton_loss = skeleton_loss.to(device)
 
+    routing_loss = (
+        RoutingLoss(crack_class_idx=1, areal_class_idxs=(2, 3, 4, 5, 6))
+        if cfg.routing_loss_weight > 0.0
+        else None
+    )
+    if routing_loss is not None and device is not None:
+        routing_loss = routing_loss.to(device)
+
     return TMDSCriterion(
         base_criterion=base,
         aux_weight=cfg.aux_loss_weight,
         skeleton_loss=skeleton_loss,
         skeleton_weight=cfg.skeleton_loss_weight,
+        routing_loss=routing_loss,
+        routing_weight=cfg.routing_loss_weight,
     )
