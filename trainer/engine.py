@@ -319,6 +319,7 @@ class SegmentationTrainer:
                 dsa_num_heads=cfg.dsa_num_heads,
                 dsa_num_strips=cfg.dsa_num_strips,
                 dsa_points_per_strip=cfg.dsa_points_per_strip,
+                mrm_stage_idx=cfg.mrm_stage_idx,
             ).to(device)
         else:
             model = TunnelSegmentor(

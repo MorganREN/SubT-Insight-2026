@@ -49,6 +49,7 @@ class TrainConfig:
     dsa_num_heads:       int = 4    # 可变形条状注意力的头数
     dsa_num_strips:      int = 4    # 每头的条数（方向数）
     dsa_points_per_strip: int = 8   # 每条的采样点数
+    mrm_stage_idx:       int = 2    # MRM 使用的骨干阶段索引（0=C1/H4, 1=C2/H8, 2=C3/H16, 3=C4/H32）
 
     # 三阶段训练（三元组分别对应 Stage1 / Stage2 / Stage3）
     # 总 epoch = sum(stage_epochs)，会覆盖 epochs 字段

@@ -135,6 +135,7 @@ class TMDSSegmentor(nn.Module):
         dsa_num_heads: int = 4,
         dsa_num_strips: int = 4,
         dsa_points_per_strip: int = 8,
+        mrm_stage_idx: int = 2,
     ):
         super().__init__()
 
@@ -150,8 +151,8 @@ class TMDSSegmentor(nn.Module):
             )
         in_ch = self.backbone.out_channels   # [96, 192, 384, 768]
 
-        # MRM 使用 C3（384 通道）
-        self.mrm = MorphologicalRoutingModule(in_channels=in_ch[2])
+        self.mrm_stage_idx = mrm_stage_idx
+        self.mrm = MorphologicalRoutingModule(in_channels=in_ch[mrm_stage_idx])
 
         # 双流解码器
         self.linear_decoder = DSADecoder(
@@ -233,7 +234,7 @@ class TMDSSegmentor(nn.Module):
             feats_f = [f.float() for f in features]
 
             # ── MRM 路由 ────────────────────────────────────────────────────────
-            alpha = self.mrm(feats_f[2])   # [B, 1, H/16, W/16]
+            alpha = self.mrm(feats_f[self.mrm_stage_idx])
             alpha = alpha.clamp(0.1, 0.9)
 
             if self.training:
