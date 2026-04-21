@@ -4,8 +4,14 @@ train.py
 
 用法
 ----
-1) 修改下方 RUN 配置。
-2) 直接运行：python train.py
+1) 直接运行（使用默认的 TMDS_RUN 配置）：
+   python train.py --use_tmds
+
+2) 覆盖部分参数：
+   python train.py --use_tmds --batch_size 8 --output_dir outputs/my_run
+
+3) 修改下方 RUN / TMDS_RUN 配置对象可调整 tuple 类型参数
+   （如 stage_epochs / stage_base_lrs）。
 
 说明
 ----
@@ -13,6 +19,9 @@ train.py
 """
 
 from __future__ import annotations
+
+import argparse
+import dataclasses
 
 from dataload import NUM_CLASSES
 from trainer import SegmentationTrainer, TrainConfig
@@ -104,7 +113,7 @@ TMDS_RUN = TrainConfig(
     # ── 三阶段训练（总 epoch = 20+30+50 = 100）───────────────────────────────
     # stage_epochs 三元组各对应一个阶段的 epoch 数
     stage_epochs        = (20, 30, 50),
-    max_steps=1000,
+    max_steps=0,
     # stage_frozen_stages：-1=全冻结, 1=仅冻结stem+stage0, 0=全解冻
     # 渐进解冻：头部先在稳定预训练特征上收敛，再逐步放开骨干
     stage_frozen_stages = (-1, 1, 0),
@@ -131,11 +140,35 @@ TMDS_RUN = TrainConfig(
 )
 
 
-def main(cfg: TrainConfig | None = None):
-    cfg = RUN if cfg is None else cfg
-    trainer = SegmentationTrainer(cfg)
-    trainer.run()
+def main():
+    parser = argparse.ArgumentParser(description="SubT-Insight 训练入口")
+    parser.add_argument("--use_tmds", action="store_true", help="使用 TMDS_RUN 配置（TMDSSegmentor）")
+    parser.add_argument("--data_root", type=str, default=None)
+    parser.add_argument("--output_dir", type=str, default=None)
+    parser.add_argument("--backbone_type", type=str, default=None, choices=["convnext_tiny", "vit_s16plus"])
+    parser.add_argument("--backbone_weight_path", type=str, default=None)
+    parser.add_argument("--batch_size", type=int, default=None)
+    parser.add_argument("--num_workers", type=int, default=None)
+    parser.add_argument("--epochs", type=int, default=None, help="单阶段训练总 epoch（use_stages=False 时生效）")
+    parser.add_argument("--base_lr", type=float, default=None)
+    parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument("--device", type=str, default=None)
+    parser.add_argument("--resume", type=str, default=None)
+    parser.add_argument("--use_amp", action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument("--use_stages", action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument("--dry_run", action="store_true", default=None)
+    args = parser.parse_args()
+
+    base_cfg = TMDS_RUN if args.use_tmds else RUN
+
+    overrides = {
+        k: v for k, v in vars(args).items()
+        if v is not None and k != "use_tmds" and k in base_cfg.__dataclass_fields__
+    }
+    cfg = dataclasses.replace(base_cfg, **overrides)
+
+    SegmentationTrainer(cfg).run()
 
 
 if __name__ == "__main__":
-    main(TMDS_RUN)
+    main()
