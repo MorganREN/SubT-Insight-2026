@@ -15,6 +15,9 @@ checkpoint 中的 use_tmds 字段会自动决定重建 TunnelSegmentor 还是 TM
 
 from __future__ import annotations
 
+import argparse
+import dataclasses
+
 from inference import InferConfig, SegmentationInferencer
 
 
@@ -59,12 +62,33 @@ RAW_RUN = InferConfig(
     use_tiling=True,     # 原图 tiling 推理，pred 与 GT 在原始分辨率下对比
 )
 
+_BASE_CONFIGS = {"raw": RAW_RUN, "tmds": TMDS_RUN, "standard": RUN}
 
-def main(cfg: InferConfig | None = None):
-    cfg = RUN if cfg is None else cfg
-    inferencer = SegmentationInferencer(cfg)
-    inferencer.run()
+
+def main():
+    parser = argparse.ArgumentParser(description="SubT-Insight 推理/评估入口")
+    parser.add_argument("--run", choices=list(_BASE_CONFIGS), default="raw")
+    parser.add_argument("--ckpt", type=str, default=None)
+    parser.add_argument("--data_root", type=str, default=None)
+    parser.add_argument("--output_dir", type=str, default=None)
+    parser.add_argument("--split", type=str, default=None, choices=["train", "val", "valid", "test"])
+    parser.add_argument("--device", type=str, default=None)
+    parser.add_argument("--batch_size", type=int, default=None)
+    parser.add_argument("--num_workers", type=int, default=None)
+    parser.add_argument("--use_tiling", action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument("--save_vis", action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument("--vis_count", type=int, default=None)
+    parser.add_argument("--use_tta", action=argparse.BooleanOptionalAction, default=None)
+    args = parser.parse_args()
+
+    base_cfg = _BASE_CONFIGS[args.run]
+    overrides = {
+        k: v for k, v in vars(args).items()
+        if v is not None and k != "run" and k in base_cfg.__dataclass_fields__
+    }
+    cfg = dataclasses.replace(base_cfg, **overrides)
+    SegmentationInferencer(cfg).run()
 
 
 if __name__ == "__main__":
-    main(RAW_RUN)
+    main()

@@ -24,6 +24,7 @@ class TrainConfig:
     input_size: int = 512
     batch_size: int = 4
     num_workers: int = 2
+    rare_class_weights: dict[int, float] | None = None  # {class_id: weight}，None = 均匀采样
 
     loss_name: str = "ce+dice"
     loss_weights: tuple[float, ...] | None = None  # None = 使用 loss_factory 内置默认权重

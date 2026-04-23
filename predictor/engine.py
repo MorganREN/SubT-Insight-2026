@@ -106,9 +106,17 @@ class ImagePredictor:
         logger.info(f"图片信息: {W}×{H} px，磁盘大小 {file_size_kb:.1f} KB")
 
         if cfg.use_tiling:
-            logger.info("使用 Tiling 推理（高斯加权拼合）")
+            tta_info = " + TTA" if cfg.use_tta else ""
+            logger.info(f"使用 Tiling 推理（高斯加权拼合{tta_info}）")
             t_start = time.perf_counter()
-            pred = tiled_predict(model, image_np, device, num_classes, input_size)
+            pred = tiled_predict(
+                model,
+                image_np,
+                device,
+                num_classes,
+                input_size,
+                use_tta=cfg.use_tta,
+            )
             infer_ms = (time.perf_counter() - t_start) * 1000
         else:
             _, input_tensor = preprocess_image(image_path, input_size=input_size)

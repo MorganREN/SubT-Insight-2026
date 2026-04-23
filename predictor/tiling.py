@@ -84,6 +84,7 @@ def tiled_predict(
     num_classes: int,
     input_size: int = 512,
     patch_batch_size: int = 4,
+    use_tta: bool = False,
 ) -> np.ndarray:
     """
     对原图做 tiling 推理，返回原图尺寸的预测 mask。
@@ -96,64 +97,67 @@ def tiled_predict(
     num_classes      : 类别数
     input_size       : 模型输入边长（默认 512）
     patch_batch_size : 每次 forward 合并的 patch 数（CPU 推理建议 4-8）
+    use_tta          : 是否做水平翻转 TTA（推理耗时约 2x）
 
     Returns
     -------
     pred_mask : H×W uint8 语义分割结果（类别索引）
     """
-    H, W = image_np.shape[:2]
-    group = _assign_group(H, W)
-    params = _TILING_PARAMS[group]
+    def _predict_proba(image_arr: np.ndarray) -> np.ndarray:
+        H, W = image_arr.shape[:2]
+        group = _assign_group(H, W)
+        params = _TILING_PARAMS[group]
 
-    # ── Tiny 群：整图 resize 后单次推理 ────────────────────────────────────────
-    if params is None:
-        tensor = _patch_to_tensor(image_np, input_size).unsqueeze(0).to(device)
-        logits = model(tensor)
-        prob_t = F.softmax(logits.float(), dim=1)                    # (1, C, is, is)
-        prob_full_t = F.interpolate(prob_t, size=(H, W), mode="bilinear", align_corners=False)
-        return prob_full_t.squeeze(0).argmax(dim=0).cpu().numpy().astype(np.uint8)
+        if params is None:
+            tensor = _patch_to_tensor(image_arr, input_size).unsqueeze(0).to(device)
+            logits = model(tensor)
+            prob_t = F.softmax(logits.float(), dim=1)
+            prob_full_t = F.interpolate(
+                prob_t, size=(H, W), mode="bilinear", align_corners=False
+            )
+            return prob_full_t.squeeze(0).cpu().numpy()
 
-    patch_size, stride = params
+        patch_size, stride = params
+        pad_h = (stride - (H - patch_size) % stride) % stride if H > patch_size else max(0, patch_size - H)
+        pad_w = (stride - (W - patch_size) % stride) % stride if W > patch_size else max(0, patch_size - W)
+        image_pad = _reflect_pad(image_arr, pad_h, pad_w) if (pad_h > 0 or pad_w > 0) else image_arr
+        PH, PW = image_pad.shape[:2]
 
-    # ── 镜像填充使图像能被完整 tiling ─────────────────────────────────────────
-    pad_h = (stride - (H - patch_size) % stride) % stride if H > patch_size else max(0, patch_size - H)
-    pad_w = (stride - (W - patch_size) % stride) % stride if W > patch_size else max(0, patch_size - W)
-    if pad_h > 0 or pad_w > 0:
-        image_pad = _reflect_pad(image_np, pad_h, pad_w)
-    else:
-        image_pad = image_np
-    PH, PW = image_pad.shape[:2]
+        prob_sum = np.zeros((num_classes, PH, PW), dtype=np.float32)
+        weight_sum = np.zeros((PH, PW), dtype=np.float32)
+        gauss = _make_gaussian_weight(patch_size)
 
-    # ── 概率累加矩阵（float32 即可，节省内存和 CPU 运算）──────────────────────
-    prob_sum   = np.zeros((num_classes, PH, PW), dtype=np.float32)
-    weight_sum = np.zeros((PH, PW), dtype=np.float32)
-    gauss      = _make_gaussian_weight(patch_size)                   # already float32
+        positions: list[tuple[int, int]] = []
+        tensors: list[torch.Tensor] = []
+        for y in range(0, PH - patch_size + 1, stride):
+            for x in range(0, PW - patch_size + 1, stride):
+                patch = image_pad[y:y + patch_size, x:x + patch_size]
+                positions.append((y, x))
+                tensors.append(_patch_to_tensor(patch, input_size))
 
-    # ── 预收集所有 patch 位置和 tensor，再按 batch 推理 ───────────────────────
-    positions: list[tuple[int, int]] = []
-    tensors:   list[torch.Tensor]    = []
-    for y in range(0, PH - patch_size + 1, stride):
-        for x in range(0, PW - patch_size + 1, stride):
-            patch = image_pad[y:y + patch_size, x:x + patch_size]   # (ps, ps, 3)
-            positions.append((y, x))
-            tensors.append(_patch_to_tensor(patch, input_size))      # CHW float32
+        for i in range(0, len(tensors), patch_batch_size):
+            batch_t = torch.stack(tensors[i:i + patch_batch_size]).to(device)
+            logits = model(batch_t)
+            prob_t = F.softmax(logits.float(), dim=1)
+            prob_t = F.interpolate(
+                prob_t, size=(patch_size, patch_size),
+                mode="bilinear", align_corners=False,
+            )
+            prob_np = prob_t.cpu().numpy()
 
-    for i in range(0, len(tensors), patch_batch_size):
-        batch_t = torch.stack(tensors[i:i + patch_batch_size]).to(device)  # (B, C, is, is)
-        logits  = model(batch_t)                                      # (B, C, is, is)
-        prob_t  = F.softmax(logits.float(), dim=1)
-        prob_t  = F.interpolate(
-            prob_t, size=(patch_size, patch_size),
-            mode="bilinear", align_corners=False,
-        )                                                              # (B, C, ps, ps)
-        prob_np = prob_t.cpu().numpy()                                 # float32
+            for j, (y, x) in enumerate(positions[i:i + patch_batch_size]):
+                prob_sum[:, y:y + patch_size, x:x + patch_size] += prob_np[j] * gauss[np.newaxis]
+                weight_sum[y:y + patch_size, x:x + patch_size] += gauss
 
-        for j, (y, x) in enumerate(positions[i:i + patch_batch_size]):
-            prob_sum[:, y:y + patch_size, x:x + patch_size]   += prob_np[j] * gauss[np.newaxis]
-            weight_sum[y:y + patch_size, x:x + patch_size]    += gauss
+        weight_sum = np.maximum(weight_sum, 1e-8)
+        avg_prob = prob_sum / weight_sum[np.newaxis]
+        return avg_prob[:, :H, :W]
 
-    # ── 归一化 + argmax ────────────────────────────────────────────────────────
-    weight_sum = np.maximum(weight_sum, 1e-8)
-    avg_prob   = prob_sum / weight_sum[np.newaxis]                    # (C, PH, PW)
-    avg_prob   = avg_prob[:, :H, :W]                                  # (C, H, W)
-    return avg_prob.argmax(axis=0).astype(np.uint8)                   # (H, W)
+    avg_prob = _predict_proba(image_np)
+
+    if use_tta:
+        flipped = np.ascontiguousarray(image_np[:, ::-1, :])
+        flipped_prob = _predict_proba(flipped)
+        avg_prob = (avg_prob + flipped_prob[:, :, ::-1]) * 0.5
+
+    return avg_prob.argmax(axis=0).astype(np.uint8)

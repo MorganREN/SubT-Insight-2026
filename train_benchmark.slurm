@@ -1,5 +1,5 @@
 #!/bin/bash --login
-#SBATCH --job-name=subt-train
+#SBATCH --job-name=subt-benchmark
 #SBATCH --partition=gpu_cuda
 #SBATCH --qos=gpu
 #SBATCH --gres=gpu:1
@@ -13,16 +13,14 @@
 #SBATCH --error=slurm-%j.err
 
 # 可修改区域
-RUN_NAME="tmds_run"
+RUN_NAME="benchmark_run"
 DATA_PATCH="dataset/tongji_data_awesome"
 DATA_RAW="dataset/tongji_data_raw"
 WORK_DIR="${WORK_DIR:-$PWD}"
 
 HEAD_CHANNELS=96
-BATCH_SIZE=16
+BATCH_SIZE=32
 NUM_WORKERS=6
-ROUTING_LOSS=0.5
-RARE_WEIGHTS=""          # 例如 "1:3.0,3:2.0"
 INFER_SPLIT="valid"
 PRED_SPLITS="valid"      # 多个 split 可写成 "valid test"
 USE_TTA=1                # 1=Step 2 开启 TTA，0=关闭
@@ -46,18 +44,12 @@ CKPT="${OUTPUT_DIR}/best.pth"
 
 TRAIN_CMD=(
   python train.py
-  --use_tmds
   --data_root "$DATA_PATCH"
   --output_dir "$OUTPUT_DIR"
   --head_channels "$HEAD_CHANNELS"
   --batch_size "$BATCH_SIZE"
   --num_workers "$NUM_WORKERS"
-  --routing_loss_weight "$ROUTING_LOSS"
 )
-
-if [ -n "$RARE_WEIGHTS" ]; then
-  TRAIN_CMD+=(--rare_class_weights "$RARE_WEIGHTS")
-fi
 
 echo ""
 echo ">>> [Step 1/3] 训练开始  $(date '+%Y-%m-%d %H:%M:%S')"

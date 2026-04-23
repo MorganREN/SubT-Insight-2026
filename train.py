@@ -157,6 +157,12 @@ def main():
     parser.add_argument("--weight_decay", type=float, default=None)
     parser.add_argument("--routing_loss_weight", type=float, default=None)
     parser.add_argument("--aux_loss_weight", type=float, default=None)
+    parser.add_argument(
+        "--rare_class_weights",
+        type=str,
+        default=None,
+        help="稀有类采样权重，格式如 '1:3.0,3:2.0'；不传则关闭增强采样",
+    )
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--device", type=str, default=None)
     parser.add_argument("--resume", type=str, default=None)
@@ -171,6 +177,15 @@ def main():
         k: v for k, v in vars(args).items()
         if v is not None and k != "use_tmds" and k in base_cfg.__dataclass_fields__
     }
+
+    if overrides.get("rare_class_weights") is not None:
+        raw_weights = overrides["rare_class_weights"]
+        overrides["rare_class_weights"] = {
+            int(pair.split(":")[0]): float(pair.split(":")[1])
+            for pair in raw_weights.split(",")
+            if ":" in pair
+        }
+
     cfg = dataclasses.replace(base_cfg, **overrides)
 
     SegmentationTrainer(cfg).run()

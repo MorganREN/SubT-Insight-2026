@@ -36,9 +36,9 @@ class SegmentationInferencer:
         panel = np.concatenate([image, gt_rgb, pred_rgb, pred_overlay, gt_overlay], axis=1)
         return Image.fromarray(panel)
 
-    @staticmethod
     @torch.no_grad()
     def _evaluate_tiled(
+        self,
         model,
         img_dir: Path,
         ann_dir: Path,
@@ -48,10 +48,12 @@ class SegmentationInferencer:
         class_names: tuple[str, ...],
     ) -> dict:
         """原图 tiling 推理 + 评估，pred 和 GT 均在原始分辨率下对比。"""
+        cfg = self.cfg
         evaluator  = SegEvaluator(num_classes=num_classes, class_names=class_names)
         img_paths  = sorted(img_dir.glob("*.jpg"))
         total      = len(img_paths)
-        logger.info(f"tiling 评估: {total} 张原图 (input_size={input_size})")
+        tta_info = " + TTA" if cfg.use_tta else ""
+        logger.info(f"tiling 评估: {total} 张原图 (input_size={input_size}{tta_info})")
         for i, img_path in enumerate(img_paths, 1):
             image_np = np.array(Image.open(img_path).convert("RGB"), dtype=np.uint8)
             ann_path = ann_dir / f"{img_path.stem}.png"
@@ -59,7 +61,14 @@ class SegmentationInferencer:
                 logger.warning(f"缺少 GT mask，跳过: {img_path.name}")
                 continue
             gt_mask  = np.array(Image.open(ann_path).convert("L"), dtype=np.uint8)
-            pred_mask = tiled_predict(model, image_np, device, num_classes, input_size)
+            pred_mask = tiled_predict(
+                model,
+                image_np,
+                device,
+                num_classes,
+                input_size,
+                use_tta=cfg.use_tta,
+            )
             evaluator.update(pred_mask[np.newaxis], gt_mask[np.newaxis])
             if i % 50 == 0 or i == total:
                 logger.info(f"  {i}/{total}")

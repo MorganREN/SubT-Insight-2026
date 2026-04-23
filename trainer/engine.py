@@ -292,6 +292,7 @@ class SegmentationTrainer:
             input_size=cfg.input_size,
             splits=["train", "val"],
             use_skeleton=cfg.use_tmds and cfg.use_skeleton_loss,
+            rare_class_weights=cfg.rare_class_weights,
         )
         train_loader = loaders["train"]
         val_loader   = loaders["val"]
