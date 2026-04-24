@@ -9,8 +9,8 @@
 #SBATCH --mem=48G
 #SBATCH --time=24:00:00
 #SBATCH --account=你的AccountString
-#SBATCH --output=slurm-%j.out
-#SBATCH --error=slurm-%j.err
+#SBATCH --output=logs/slurm-%j.out
+#SBATCH --error=logs/slurm-%j.err
 
 # 可修改区域
 RUN_NAME="benchmark_run"

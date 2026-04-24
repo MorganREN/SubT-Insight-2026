@@ -1,16 +1,16 @@
 #!/bin/bash --login
-#SBATCH --job-name=subt-train
+#SBATCH --job-name=subt-train-c3
 #SBATCH --partition=gpu_cuda
 #SBATCH --qos=gpu
-#SBATCH --gres=gpu:1
+#SBATCH --gres=gpu:h100:1
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=48G
 #SBATCH --time=24:00:00
-#SBATCH --account=你的AccountString
-#SBATCH --output=slurm-%j.out
-#SBATCH --error=slurm-%j.err
+#SBATCH --account=a_civil_eng
+#SBATCH --output=logs/slurm-%j.out
+#SBATCH --error=logs/slurm-%j.err
 
 # 可修改区域
 RUN_NAME="tmds_run"
@@ -19,10 +19,10 @@ DATA_RAW="dataset/tongji_data_raw"
 WORK_DIR="${WORK_DIR:-$PWD}"
 
 HEAD_CHANNELS=96
-BATCH_SIZE=16
+BATCH_SIZE=32
 NUM_WORKERS=6
-ROUTING_LOSS=0.5
-RARE_WEIGHTS=""          # 例如 "1:3.0,3:2.0"
+ROUTING_LOSS=0.6
+RARE_WEIGHTS="1:3.0,3:2.0"          # 例如 "1:3.0,3:2.0" 表示类别 1 的权重是 3.0，类别 3 的权重是 2.0
 INFER_SPLIT="valid"
 PRED_SPLITS="valid"      # 多个 split 可写成 "valid test"
 USE_TTA=1                # 1=Step 2 开启 TTA，0=关闭

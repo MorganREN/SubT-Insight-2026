@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
 
@@ -52,12 +53,21 @@ class ImagePredictor:
             ignore_index=ignore_index,
         )
         evaluator.update(pred[np.newaxis, ...], target[np.newaxis, ...])
-        metrics = evaluator.compute()
-        return {
-            "mIoU": float(metrics["mIoU"]),
-            "aAcc": float(metrics["aAcc"]),
-            "IoU": metrics["IoU"],
-        }
+        return evaluator.compute(), evaluator
+
+    @staticmethod
+    def _to_serializable(value):
+        if isinstance(value, dict):
+            return {k: ImagePredictor._to_serializable(v) for k, v in value.items()}
+        if isinstance(value, np.ndarray):
+            return value.tolist()
+        if isinstance(value, (np.floating,)):
+            return float(value)
+        if isinstance(value, (np.integer,)):
+            return int(value)
+        if isinstance(value, list):
+            return [ImagePredictor._to_serializable(v) for v in value]
+        return value
 
     @torch.no_grad()
     def run(self):
@@ -136,7 +146,7 @@ class ImagePredictor:
             gt_overlay = blend_overlay(image_np, gt_color, alpha=0.45)
             error_overlay = build_error_overlay(image_np, pred, gt_mask)
 
-            metric = self._compute_single_image_metrics(
+            metric, evaluator = self._compute_single_image_metrics(
                 pred,
                 gt_mask,
                 num_classes=num_classes,
@@ -162,9 +172,17 @@ class ImagePredictor:
                 present_mask=present_mask,
                 pred_raw_mask=pred,
             )
-            logger.info(
-                f"单图指标: mIoU={metric['mIoU']*100:.2f}%  Accuracy={metric['aAcc']*100:.2f}%"
-            )
+            logger.info(f"单图指标: {evaluator.summary(metric)}")
+            evaluator.print_task_report(metric)
+            metrics_path = out_dir / f"{image_path.stem}_metrics.json"
+            with open(metrics_path, "w", encoding="utf-8") as f:
+                json.dump(
+                    self._to_serializable(metric),
+                    f,
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            logger.info(f"单图 metrics 已保存: {metrics_path}")
         else:
             save_outputs_basic(
                 image_path=image_path,

@@ -30,6 +30,20 @@ class SegmentationInferencer:
         self.cfg = cfg
 
     @staticmethod
+    def _to_serializable(value):
+        if isinstance(value, dict):
+            return {k: SegmentationInferencer._to_serializable(v) for k, v in value.items()}
+        if isinstance(value, np.ndarray):
+            return value.tolist()
+        if isinstance(value, (np.floating,)):
+            return float(value)
+        if isinstance(value, (np.integer,)):
+            return int(value)
+        if isinstance(value, list):
+            return [SegmentationInferencer._to_serializable(v) for v in value]
+        return value
+
+    @staticmethod
     def _build_panel(image: np.ndarray, gt_rgb: np.ndarray, pred_rgb: np.ndarray) -> Image.Image:
         gt_overlay = blend_overlay(image, gt_rgb)
         pred_overlay = blend_overlay(image, pred_rgb)
@@ -74,11 +88,8 @@ class SegmentationInferencer:
                 logger.info(f"  {i}/{total}")
         metrics = evaluator.compute()
         evaluator.print_table(metrics)
-        logger.info(
-            f"评估摘要: aAcc={metrics['aAcc']*100:.2f}%  "
-            f"mIoU={metrics['mIoU']*100:.2f}%  "
-            f"mDice={metrics['mDice']*100:.2f}%"
-        )
+        evaluator.print_task_report(metrics)
+        logger.info(f"评估摘要: {evaluator.summary(metrics)}")
         return metrics
 
     @staticmethod
@@ -94,11 +105,8 @@ class SegmentationInferencer:
 
         metrics = evaluator.compute()
         evaluator.print_table(metrics)
-        logger.info(
-            f"评估摘要: aAcc={metrics['aAcc']*100:.2f}%  "
-            f"mIoU={metrics['mIoU']*100:.2f}%  "
-            f"mDice={metrics['mDice']*100:.2f}%"
-        )
+        evaluator.print_task_report(metrics)
+        logger.info(f"评估摘要: {evaluator.summary(metrics)}")
         return metrics
 
     @classmethod
@@ -130,15 +138,13 @@ class SegmentationInferencer:
 
     @staticmethod
     def _save_metrics(metrics: dict, output_dir: Path):
-        serializable = {}
-        for key, value in metrics.items():
-            if isinstance(value, np.ndarray):
-                serializable[key] = value.tolist()
-            else:
-                serializable[key] = float(value)
-
         with open(output_dir / "metrics.json", "w", encoding="utf-8") as f:
-            json.dump(serializable, f, ensure_ascii=False, indent=2)
+            json.dump(
+                SegmentationInferencer._to_serializable(metrics),
+                f,
+                ensure_ascii=False,
+                indent=2,
+            )
         logger.info(f"metrics 已保存: {output_dir / 'metrics.json'}")
 
     def run(self) -> dict:

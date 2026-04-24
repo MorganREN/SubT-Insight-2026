@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import csv
+import json
 import time
 from dataclasses import asdict
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
 import torch
 from loguru import logger
 from torch.amp import GradScaler, autocast
@@ -49,16 +52,122 @@ class SegmentationTrainer:
 
     @staticmethod
     def _format_metrics(metrics: dict) -> str:
-        iou_str = " ".join(
-            f"{CLASS_NAMES[i][:4]}={metrics['IoU'][i] * 100:.1f}"
-            for i in range(NUM_CLASSES)
-        )
         return (
             f"mIoU={metrics['mIoU'] * 100:.2f}%  "
             f"aAcc={metrics['aAcc'] * 100:.2f}%  "
             f"mDice={metrics['mDice'] * 100:.2f}%  "
-            f"[{iou_str}]"
+            f"fg-mIoU={metrics['mIoU_fg'] * 100:.2f}%  "
+            f"crack[D={metrics['crack_dice'] * 100:.2f}% "
+            f"R={metrics['crack_recall'] * 100:.2f}% "
+            f"P={metrics['crack_precision'] * 100:.2f}% "
+            f"ImgR={metrics['crack_image_recall'] * 100:.2f}% "
+            f"CompR={metrics['crack_component_recall'] * 100:.2f}% "
+            f"BF1={metrics['crack_boundary_f1'] * 100:.2f}% "
+            f"SF1={metrics['crack_skeleton_f1'] * 100:.2f}%]"
         )
+
+    @staticmethod
+    def _to_serializable(value):
+        if isinstance(value, dict):
+            return {k: SegmentationTrainer._to_serializable(v) for k, v in value.items()}
+        if isinstance(value, np.ndarray):
+            return value.tolist()
+        if isinstance(value, (np.floating,)):
+            return float(value)
+        if isinstance(value, (np.integer,)):
+            return int(value)
+        if isinstance(value, list):
+            return [SegmentationTrainer._to_serializable(v) for v in value]
+        return value
+
+    @staticmethod
+    def _save_history(history_rows: list[dict], out_dir: Path):
+        json_path = out_dir / "training_history.json"
+        csv_path = out_dir / "training_history.csv"
+
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump(
+                [SegmentationTrainer._to_serializable(row) for row in history_rows],
+                f,
+                ensure_ascii=False,
+                indent=2,
+            )
+
+        fieldnames = sorted({key for row in history_rows for key in row.keys()})
+        with open(csv_path, "w", encoding="utf-8", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            for row in history_rows:
+                writer.writerow({
+                    key: SegmentationTrainer._to_serializable(row.get(key))
+                    for key in fieldnames
+                })
+
+    @staticmethod
+    def _plot_training_curves(history_rows: list[dict], out_dir: Path):
+        try:
+            import matplotlib
+            matplotlib.use("Agg")
+            import matplotlib.pyplot as plt
+        except Exception as e:
+            logger.warning(f"matplotlib 不可用，跳过 loss 曲线绘图: {e}")
+            return
+
+        if not history_rows:
+            return
+
+        epochs = [row["epoch"] for row in history_rows]
+        train_losses = [row["train_loss"] for row in history_rows]
+        val_rows = [row for row in history_rows if row.get("val_loss") is not None]
+        val_epochs = [row["epoch"] for row in val_rows]
+        val_losses = [row["val_loss"] for row in val_rows]
+
+        plt.rcParams.update({
+            "font.family": "DejaVu Serif",
+            "font.size": 10,
+            "axes.spines.top": False,
+            "axes.spines.right": False,
+            "axes.grid": True,
+            "grid.alpha": 0.18,
+            "grid.linestyle": "--",
+        })
+
+        fig, ax = plt.subplots(figsize=(7.4, 4.3), constrained_layout=True)
+        ax.plot(
+            epochs, train_losses,
+            color="#1f4e79", linewidth=2.2, label="Train Loss"
+        )
+        if val_epochs:
+            ax.plot(
+                val_epochs, val_losses,
+                color="#c0392b", linewidth=2.0, marker="o", markersize=4.5,
+                label="Validation Loss",
+            )
+            best_idx = int(np.argmin(val_losses))
+            ax.scatter(
+                [val_epochs[best_idx]], [val_losses[best_idx]],
+                color="#c0392b", s=55, zorder=5,
+            )
+            ax.annotate(
+                f"Best val loss\nE{val_epochs[best_idx]}: {val_losses[best_idx]:.4f}",
+                xy=(val_epochs[best_idx], val_losses[best_idx]),
+                xytext=(10, 14),
+                textcoords="offset points",
+                fontsize=9,
+                color="#7f1d1d",
+            )
+
+        ax.set_title("Training and Validation Loss", fontsize=12, pad=10)
+        ax.set_xlabel("Epoch")
+        ax.set_ylabel("Loss")
+        ax.legend(frameon=False, loc="best")
+
+        png_path = out_dir / "training_loss_curve.png"
+        pdf_path = out_dir / "training_loss_curve.pdf"
+        fig.savefig(png_path, dpi=300, bbox_inches="tight")
+        fig.savefig(pdf_path, bbox_inches="tight")
+        plt.close(fig)
+        logger.info(f"训练 loss 曲线已保存: {png_path} / {pdf_path}")
 
     # ──────────────────────────────────────────────────────────────────────────
     # TMDS 三阶段训练辅助
@@ -406,6 +515,7 @@ class SegmentationTrainer:
 
         logger.info(f"开始训练: epoch {start_epoch} → {cfg.epochs}")
         epoch_times = []
+        history_rows: list[dict] = []
 
         # ── 阶段内 epoch 计数（用于调度器 step）──
         stage_epoch_offset = 0   # 当前阶段开始时的全局 epoch
@@ -459,6 +569,15 @@ class SegmentationTrainer:
             )
             log_lr(optimizer)
 
+            epoch_record = {
+                "epoch": epoch,
+                "stage": current_stage + 1 if (cfg.use_tmds or cfg.use_stages) else 0,
+                "train_loss": train_loss,
+                "epoch_time_sec": epoch_time,
+            }
+            for key, value in train_components.items():
+                epoch_record[f"train_component/{key}"] = value
+
             # ── TensorBoard：训练曲线 ──
             if tb_writer is not None:
                 tb_writer.add_scalar("Loss/train", train_loss, epoch)
@@ -479,11 +598,15 @@ class SegmentationTrainer:
                     use_amp=use_amp,
                 )
                 evaluator.print_table(metrics)
+                evaluator.print_task_report(metrics)
                 logger.info(
                     f"【Val   Epoch {epoch:03d}】  "
                     f"loss={val_loss:.4f}  "
                     + self._format_metrics(metrics)
                 )
+
+                epoch_record["val_loss"] = val_loss
+                epoch_record.update(evaluator.to_dict(metrics, prefix="val/"))
 
                 # ── TensorBoard：验证曲线 ──
                 if tb_writer is not None:
@@ -491,8 +614,20 @@ class SegmentationTrainer:
                     tb_writer.add_scalar("Metrics/mIoU",    metrics["mIoU"],      epoch)
                     tb_writer.add_scalar("Metrics/aAcc",    metrics["aAcc"],      epoch)
                     tb_writer.add_scalar("Metrics/mDice",   metrics["mDice"],     epoch)
+                    tb_writer.add_scalar("Metrics/mIoU_fg", metrics["mIoU_fg"],   epoch)
+                    tb_writer.add_scalar("Metrics/crack_dice", metrics["crack_dice"], epoch)
+                    tb_writer.add_scalar("Metrics/crack_recall", metrics["crack_recall"], epoch)
+                    tb_writer.add_scalar("Metrics/crack_precision", metrics["crack_precision"], epoch)
+                    tb_writer.add_scalar("Metrics/crack_image_recall", metrics["crack_image_recall"], epoch)
+                    tb_writer.add_scalar("Metrics/crack_component_recall", metrics["crack_component_recall"], epoch)
+                    tb_writer.add_scalar("Metrics/crack_boundary_f1", metrics["crack_boundary_f1"], epoch)
+                    tb_writer.add_scalar("Metrics/crack_skeleton_f1", metrics["crack_skeleton_f1"], epoch)
                     for i, name in enumerate(CLASS_NAMES):
-                        tb_writer.add_scalar(f"IoU/{name}", metrics["IoU"][i],    epoch)
+                        tb_writer.add_scalar(f"IoU/{name}", metrics["IoU"][i], epoch)
+                        tb_writer.add_scalar(f"Dice/{name}", metrics["Dice"][i], epoch)
+                        tb_writer.add_scalar(f"Recall/{name}", metrics["Acc"][i], epoch)
+                        tb_writer.add_scalar(f"Precision/{name}", metrics["Precision"][i], epoch)
+                        tb_writer.add_scalar(f"ImageRecall/{name}", metrics["ImageRecall"][i], epoch)
 
                 is_best = metrics["mIoU"] > best_miou
                 if is_best:
@@ -513,6 +648,8 @@ class SegmentationTrainer:
                         f"✅ 新最优模型！mIoU={best_miou * 100:.2f}%  → {out_dir / 'best.pth'}"
                     )
 
+                epoch_record["best_miou_so_far"] = best_miou
+
                 send_eval_result(
                     epoch=epoch,
                     total_epochs=cfg.epochs,
@@ -521,7 +658,10 @@ class SegmentationTrainer:
                     is_best=is_best,
                     class_names=CLASS_NAMES,
                     run_name=Path(cfg.output_dir).name,
-                )
+                    )
+
+            history_rows.append(epoch_record)
+            self._save_history(history_rows, out_dir)
 
             self._save_checkpoint(
                 {
@@ -538,10 +678,12 @@ class SegmentationTrainer:
         if tb_writer is not None:
             tb_writer.close()
 
+        self._plot_training_curves(history_rows, out_dir)
         logger.success("=" * 70)
         logger.success(f"训练完成！最优验证集 mIoU = {best_miou * 100:.2f}%")
         logger.success(f"最优模型: {out_dir / 'best.pth'}")
         logger.success(f"日志文件: {out_dir / 'train.log'}")
+        logger.success(f"训练历史: {out_dir / 'training_history.json'} / {out_dir / 'training_history.csv'}")
         logger.success("=" * 70)
 
         send_training_done(
