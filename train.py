@@ -132,8 +132,8 @@ TMDS_RUN = TrainConfig(
     # ── 通用训练超参数 ────────────────────────────────────────────────────────
     use_class_weights = True,
     optimizer_type    = "adamw",
-    weight_decay      = 4e-4,
-    backbone_lr_mult  = 0.005,
+    weight_decay      = 1e-2,
+    backbone_lr_mult  = 0.05,
     scheduler         = "cosine",
     clip_grad         = 1.0,
     val_interval      = 5,        # 三阶段训练共 100 epoch，每 5 epoch 验证一次
