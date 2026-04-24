@@ -136,6 +136,7 @@ class TMDSSegmentor(nn.Module):
         dsa_num_strips: int = 4,
         dsa_points_per_strip: int = 8,
         mrm_stage_idx: int = 2,
+        use_cmim: bool = True,
     ):
         super().__init__()
 
@@ -152,6 +153,7 @@ class TMDSSegmentor(nn.Module):
         in_ch = self.backbone.out_channels   # [96, 192, 384, 768]
 
         self.mrm_stage_idx = mrm_stage_idx
+        self.use_cmim = use_cmim
         self.mrm = MorphologicalRoutingModule(in_channels=in_ch[mrm_stage_idx])
 
         # 双流解码器
@@ -170,9 +172,13 @@ class TMDSSegmentor(nn.Module):
 
         # CMIM：head 数须整除 head_channels，取 head_channels // 32，最小为 1
         cmim_heads = max(1, head_channels // 32)
-        self.cmim = CrossMorphologyInteractionModule(
-            channels=head_channels,
-            num_heads=cmim_heads,
+        self.cmim = (
+            CrossMorphologyInteractionModule(
+                channels=head_channels,
+                num_heads=cmim_heads,
+            )
+            if use_cmim
+            else None
         )
 
         # 分类头
@@ -188,9 +194,10 @@ class TMDSSegmentor(nn.Module):
         dec = sum(
             p.numel() for p in list(self.linear_decoder.parameters())
             + list(self.areal_decoder.parameters())
-            + list(self.cmim.parameters())
             + list(self.mrm.parameters())
         ) / 1e6
+        if self.cmim is not None:
+            dec += sum(p.numel() for p in self.cmim.parameters()) / 1e6
         trainable = sum(p.numel() for p in self.parameters() if p.requires_grad) / 1e6
         bb_name = (
             "DINOv3 ViT-S+/16"
@@ -202,7 +209,8 @@ class TMDSSegmentor(nn.Module):
             f"TMDSSegmentor 初始化完成:\n"
             f"  Backbone:  {bb_name} ({bb:.1f}M)\n"
             f"  MRM stage: [{self.mrm_stage_idx}] {_stage_label[self.mrm_stage_idx]}\n"
-            f"  Decoders:  MRM + DSA + Areal + CMIM ({dec:.1f}M)\n"
+            f"  Decoders:  MRM + DSA + Areal"
+            f"{' + CMIM' if self.use_cmim else ''} ({dec:.1f}M)\n"
             f"  总参数:    {bb + dec:.1f}M  (可训练: {trainable:.1f}M)"
         )
 
@@ -260,11 +268,12 @@ class TMDSSegmentor(nn.Module):
                 self._assert_finite(F_A, "areal_decoder")
 
             # ── 跨形态交互 ──────────────────────────────────────────────────────
-            F_L, F_A = self.cmim(F_L, F_A)
+            if self.cmim is not None:
+                F_L, F_A = self.cmim(F_L, F_A)
 
-            if self.training:
-                self._assert_finite(F_L, "cmim/F_L")
-                self._assert_finite(F_A, "cmim/F_A")
+                if self.training:
+                    self._assert_finite(F_L, "cmim/F_L")
+                    self._assert_finite(F_A, "cmim/F_A")
 
             # ── 分类 ────────────────────────────────────────────────────────────
             main    = self.main_cls(torch.cat([F_L, F_A], dim=1))

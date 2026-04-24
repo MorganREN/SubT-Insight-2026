@@ -132,6 +132,7 @@ def _build_tmds_segmentor_from_checkpoint(
     dsa_num_heads        = int(cfg.get("dsa_num_heads",        4))
     dsa_num_strips       = int(cfg.get("dsa_num_strips",       4))
     dsa_points_per_strip = int(cfg.get("dsa_points_per_strip", 8))
+    use_cmim             = bool(cfg.get("use_cmim", True))
 
     # 推理时不加载骨干预训练权重（直接从 checkpoint 的 state_dict 恢复）
     backbone_weight_path = (
@@ -149,6 +150,7 @@ def _build_tmds_segmentor_from_checkpoint(
         dsa_num_heads=dsa_num_heads,
         dsa_num_strips=dsa_num_strips,
         dsa_points_per_strip=dsa_points_per_strip,
+        use_cmim=use_cmim,
     ).to(device)
 
     state_dict = ckpt.get("model", ckpt)
@@ -159,7 +161,7 @@ def _build_tmds_segmentor_from_checkpoint(
         f"TMDS 模型恢复完成: backbone={backbone_type}, num_classes={num_classes}, "
         f"head_channels={head_channels}, "
         f"dsa_heads={dsa_num_heads}, strips={dsa_num_strips}, "
-        f"points={dsa_points_per_strip}"
+        f"points={dsa_points_per_strip}, use_cmim={use_cmim}"
     )
     return model, cfg
 
@@ -210,6 +212,7 @@ def _build_quantized_segmentor_from_checkpoint(
         dsa_num_heads        = int(cfg.get("dsa_num_heads",        4))
         dsa_num_strips       = int(cfg.get("dsa_num_strips",       4))
         dsa_points_per_strip = int(cfg.get("dsa_points_per_strip", 8))
+        use_cmim             = bool(cfg.get("use_cmim", True))
         float_model = TMDSSegmentor(
             num_classes=num_classes,
             backbone_type=backbone_type,
@@ -219,6 +222,7 @@ def _build_quantized_segmentor_from_checkpoint(
             dsa_num_heads=dsa_num_heads,
             dsa_num_strips=dsa_num_strips,
             dsa_points_per_strip=dsa_points_per_strip,
+            use_cmim=use_cmim,
         ).cpu().eval()
     else:
         float_model = TunnelSegmentor(

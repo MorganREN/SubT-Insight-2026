@@ -104,6 +104,7 @@ TMDS_RUN = TrainConfig(
     dsa_num_heads        = 4,
     dsa_num_strips       = 4,
     dsa_points_per_strip = 8,
+    use_cmim            = True,
 
     # ── 数据 ─────────────────────────────────────────────────────────────────
     input_size  = 512,
@@ -150,6 +151,8 @@ def main():
     parser.add_argument("--head_channels", type=int, default=None)
     parser.add_argument("--mrm_stage_idx", type=int, default=None, choices=[0, 1, 2, 3],
                         help="MRM 输入骨干阶段：0=C1/H4, 1=C2/H8, 2=C3/H16(默认), 3=C4/H32")
+    parser.add_argument("--use_cmim", action=argparse.BooleanOptionalAction, default=None,
+                        help="TMDS 是否启用跨形态交互模块 CMIM")
     parser.add_argument("--batch_size", type=int, default=None)
     parser.add_argument("--num_workers", type=int, default=None)
     parser.add_argument("--epochs", type=int, default=None, help="单阶段训练总 epoch（use_stages=False 时生效）")
