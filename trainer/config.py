@@ -8,6 +8,7 @@ from dataload import NUM_CLASSES
 @dataclass
 class TrainConfig:
     data_root: str = "dataset/tongji_data"
+    extra_data_roots: tuple[str, ...] = ()   # 追加的额外训练数据根目录，val split 不存在时自动跳过
     output_dir: str = "outputs/train_run"
     device: str = "auto"
     resume: str = ""

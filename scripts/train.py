@@ -20,6 +20,9 @@ train.py
 
 from __future__ import annotations
 
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
+
 import argparse
 import dataclasses
 
@@ -145,6 +148,10 @@ def main():
     parser = argparse.ArgumentParser(description="SubT-Insight 训练入口")
     parser.add_argument("--use_tmds", action="store_true", help="使用 TMDS_RUN 配置（TMDSSegmentor）")
     parser.add_argument("--data_root", type=str, default=None)
+    parser.add_argument(
+        "--extra_data_roots", nargs="*", type=str, default=None, metavar="DIR",
+        help="额外训练数据根目录（可多个），val split 不存在时自动跳过",
+    )
     parser.add_argument("--output_dir", type=str, default=None)
     parser.add_argument("--backbone_type", type=str, default=None, choices=["convnext_tiny", "vit_s16plus"])
     parser.add_argument("--backbone_weight_path", type=str, default=None)
@@ -188,6 +195,9 @@ def main():
             for pair in raw_weights.split(",")
             if ":" in pair
         }
+
+    if overrides.get("extra_data_roots") is not None:
+        overrides["extra_data_roots"] = tuple(overrides["extra_data_roots"])
 
     cfg = dataclasses.replace(base_cfg, **overrides)
 

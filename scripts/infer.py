@@ -15,6 +15,9 @@ checkpoint 中的 use_tmds 字段会自动决定重建 TunnelSegmentor 还是 TM
 
 from __future__ import annotations
 
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
+
 import argparse
 import dataclasses
 
@@ -50,7 +53,7 @@ TMDS_RUN = InferConfig(
 
 # ── 原始分辨率数据集评估（tongji_data_raw，tiling 推理）────────────────────────
 RAW_RUN = InferConfig(
-    ckpt="outputs/quantized_tmds_run/model_int8.pth",
+    ckpt="outputs/ablation_tmds_full/best.pth",
     data_root="dataset/tongji_data_raw",
     split="valid",
     device="auto",
@@ -58,8 +61,9 @@ RAW_RUN = InferConfig(
     num_workers=0,
     save_vis=False,
     vis_count=0,
-    output_dir="outputs/quantized_infer_raw",
+    output_dir="outputs/ablation_tmds_full",
     use_tiling=True,     # 原图 tiling 推理，pred 与 GT 在原始分辨率下对比
+    use_tta=False,
 )
 
 _BASE_CONFIGS = {"raw": RAW_RUN, "tmds": TMDS_RUN, "standard": RUN}

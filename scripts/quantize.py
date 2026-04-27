@@ -27,6 +27,9 @@ quantize.py
 
 from __future__ import annotations
 
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
+
 import json
 import sys
 from dataclasses import dataclass

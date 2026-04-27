@@ -395,7 +395,7 @@ class SegmentationTrainer:
 
         # ── 数据加载 ──
         loaders = build_dataloaders(
-            data_roots=[cfg.data_root],
+            data_roots=[cfg.data_root, *cfg.extra_data_roots],
             batch_size=cfg.batch_size,
             num_workers=cfg.num_workers,
             input_size=cfg.input_size,

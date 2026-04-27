@@ -23,6 +23,8 @@ WORK_DIR="${WORK_DIR:-$PWD}"
 HEAD_CHANNELS=96
 BATCH_SIZE=32
 NUM_WORKERS=6
+RARE_WEIGHTS="1:3.0,3:2.0"
+ROBOFLOW_DATA="dataset/roboflow_tongji_tunnel_raw_final"
 INFER_SPLIT="valid"
 PRED_SPLITS="valid"
 USE_TTA=1
@@ -46,12 +48,14 @@ OUTPUT_DIR="outputs/${RUN_NAME}"
 CKPT="${OUTPUT_DIR}/best.pth"
 
 TRAIN_CMD=(
-  python train.py
+  python scripts/train.py
   --data_root "$DATA_PATCH"
+  --extra_data_roots "$ROBOFLOW_DATA"
   --output_dir "$OUTPUT_DIR"
   --head_channels "$HEAD_CHANNELS"
   --batch_size "$BATCH_SIZE"
   --num_workers "$NUM_WORKERS"
+  --rare_class_weights "$RARE_WEIGHTS"
 )
 
 echo ""
@@ -70,7 +74,7 @@ fi
 echo ">>> [Step 1/3] 训练完成  $(date '+%Y-%m-%d %H:%M:%S')"
 
 INFER_CMD=(
-  python infer.py
+  python scripts/infer.py
   --run raw
   --ckpt "$CKPT"
   --data_root "$DATA_RAW"
@@ -95,7 +99,7 @@ echo ">>> [Step 2/3] 推理评估完成  $(date '+%Y-%m-%d %H:%M:%S')"
 
 echo ""
 echo ">>> [Step 3/3] 全图推理开始  $(date '+%Y-%m-%d %H:%M:%S')"
-python predict_dataset.py \
+python scripts/predict_dataset.py \
   --ckpt "$CKPT" \
   --img_root "${DATA_RAW}/img_dir" \
   --splits $PRED_SPLITS \
