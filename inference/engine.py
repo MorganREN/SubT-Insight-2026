@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+from concurrent.futures import ProcessPoolExecutor, as_completed
 import json
 from dataclasses import asdict
 from pathlib import Path
@@ -23,6 +25,102 @@ from utils.segmentor_loader import (
 from utils.segmentation_vis import blend_overlay, colorize_mask, denormalize_image_tensor
 
 from .config import InferConfig
+
+
+_TILED_WORKER_MODEL = None
+_TILED_WORKER_DEVICE = torch.device("cpu")
+_TILED_WORKER_NUM_CLASSES = NUM_CLASSES
+_TILED_WORKER_INPUT_SIZE = 512
+_TILED_WORKER_CLASS_NAMES = CLASS_NAMES
+_TILED_WORKER_USE_TTA = False
+
+
+def _set_torch_cpu_threads(num_threads: int) -> None:
+    num_threads = max(1, int(num_threads))
+    torch.set_num_threads(num_threads)
+    try:
+        torch.set_num_interop_threads(1)
+    except RuntimeError:
+        # PyTorch only allows this before inter-op parallel work starts.
+        pass
+
+
+def _init_tiled_worker(
+    ckpt_path: str,
+    num_classes: int,
+    input_size: int,
+    class_names: tuple[str, ...],
+    use_tta: bool,
+    threads_per_worker: int,
+) -> None:
+    global _TILED_WORKER_MODEL
+    global _TILED_WORKER_NUM_CLASSES
+    global _TILED_WORKER_INPUT_SIZE
+    global _TILED_WORKER_CLASS_NAMES
+    global _TILED_WORKER_USE_TTA
+
+    _set_torch_cpu_threads(threads_per_worker)
+    ckpt = load_checkpoint_compat(ckpt_path, map_location="cpu")
+    model, _ = build_segmentor_from_checkpoint(
+        ckpt,
+        _TILED_WORKER_DEVICE,
+        default_num_classes=NUM_CLASSES,
+        use_backbone_weight_from_cfg=True,
+        use_frozen_stages_from_cfg=True,
+    )
+    _TILED_WORKER_MODEL = model
+    _TILED_WORKER_NUM_CLASSES = num_classes
+    _TILED_WORKER_INPUT_SIZE = input_size
+    _TILED_WORKER_CLASS_NAMES = class_names
+    _TILED_WORKER_USE_TTA = use_tta
+
+
+def _extract_evaluator_state(evaluator: SegEvaluator) -> dict:
+    return {
+        "confusion_matrix": evaluator.confusion_matrix,
+        "image_tp": evaluator._image_tp.copy(),
+        "image_fp": evaluator._image_fp.copy(),
+        "image_fn": evaluator._image_fn.copy(),
+        "num_images": evaluator._num_images,
+        "crack_component_gt_total": evaluator._crack_component_gt_total,
+        "crack_component_gt_hit": evaluator._crack_component_gt_hit,
+        "crack_component_pred_total": evaluator._crack_component_pred_total,
+        "crack_component_pred_hit": evaluator._crack_component_pred_hit,
+        "crack_boundary_pred_hit": evaluator._crack_boundary_pred_hit,
+        "crack_boundary_pred_total": evaluator._crack_boundary_pred_total,
+        "crack_boundary_gt_hit": evaluator._crack_boundary_gt_hit,
+        "crack_boundary_gt_total": evaluator._crack_boundary_gt_total,
+        "crack_skeleton_pred_hit": evaluator._crack_skeleton_pred_hit,
+        "crack_skeleton_pred_total": evaluator._crack_skeleton_pred_total,
+        "crack_skeleton_gt_hit": evaluator._crack_skeleton_gt_hit,
+        "crack_skeleton_gt_total": evaluator._crack_skeleton_gt_total,
+    }
+
+
+def _evaluate_tiled_image_worker(task: tuple[str, str]) -> dict:
+    img_path_str, ann_dir_str = task
+    img_path = Path(img_path_str)
+    ann_path = Path(ann_dir_str) / f"{img_path.stem}.png"
+    if not ann_path.exists():
+        return {"ok": False, "image": img_path.name, "reason": "missing_gt"}
+
+    image_np = np.array(Image.open(img_path).convert("RGB"), dtype=np.uint8)
+    gt_mask = np.array(Image.open(ann_path).convert("L"), dtype=np.uint8)
+    pred_mask = tiled_predict(
+        _TILED_WORKER_MODEL,
+        image_np,
+        _TILED_WORKER_DEVICE,
+        _TILED_WORKER_NUM_CLASSES,
+        _TILED_WORKER_INPUT_SIZE,
+        use_tta=_TILED_WORKER_USE_TTA,
+    )
+
+    evaluator = SegEvaluator(
+        num_classes=_TILED_WORKER_NUM_CLASSES,
+        class_names=_TILED_WORKER_CLASS_NAMES,
+    )
+    evaluator.update(pred_mask[np.newaxis], gt_mask[np.newaxis])
+    return {"ok": True, "image": img_path.name, "state": _extract_evaluator_state(evaluator)}
 
 
 class SegmentationInferencer:
@@ -49,6 +147,29 @@ class SegmentationInferencer:
         pred_overlay = blend_overlay(image, pred_rgb)
         panel = np.concatenate([image, gt_rgb, pred_rgb, pred_overlay, gt_overlay], axis=1)
         return Image.fromarray(panel)
+
+    @staticmethod
+    def _merge_evaluator_state(evaluator: SegEvaluator, state: dict) -> None:
+        evaluator._confusion_matrix += state["confusion_matrix"]
+        evaluator._image_tp += state["image_tp"]
+        evaluator._image_fp += state["image_fp"]
+        evaluator._image_fn += state["image_fn"]
+        evaluator._num_images += state["num_images"]
+
+        evaluator._crack_component_gt_total += state["crack_component_gt_total"]
+        evaluator._crack_component_gt_hit += state["crack_component_gt_hit"]
+        evaluator._crack_component_pred_total += state["crack_component_pred_total"]
+        evaluator._crack_component_pred_hit += state["crack_component_pred_hit"]
+
+        evaluator._crack_boundary_pred_hit += state["crack_boundary_pred_hit"]
+        evaluator._crack_boundary_pred_total += state["crack_boundary_pred_total"]
+        evaluator._crack_boundary_gt_hit += state["crack_boundary_gt_hit"]
+        evaluator._crack_boundary_gt_total += state["crack_boundary_gt_total"]
+
+        evaluator._crack_skeleton_pred_hit += state["crack_skeleton_pred_hit"]
+        evaluator._crack_skeleton_pred_total += state["crack_skeleton_pred_total"]
+        evaluator._crack_skeleton_gt_hit += state["crack_skeleton_gt_hit"]
+        evaluator._crack_skeleton_gt_total += state["crack_skeleton_gt_total"]
 
     @torch.no_grad()
     def _evaluate_tiled(
@@ -86,6 +207,62 @@ class SegmentationInferencer:
             evaluator.update(pred_mask[np.newaxis], gt_mask[np.newaxis])
             if i % 50 == 0 or i == total:
                 logger.info(f"  {i}/{total}")
+        metrics = evaluator.compute()
+        evaluator.print_table(metrics)
+        evaluator.print_task_report(metrics)
+        logger.info(f"评估摘要: {evaluator.summary(metrics)}")
+        return metrics
+
+    def _evaluate_tiled_parallel(
+        self,
+        ckpt_path: Path,
+        img_dir: Path,
+        ann_dir: Path,
+        num_classes: int,
+        input_size: int,
+        class_names: tuple[str, ...],
+    ) -> dict:
+        """CPU 原图 tiling 并行评估：按原图分发到多个 worker 进程。"""
+        cfg = self.cfg
+        evaluator = SegEvaluator(num_classes=num_classes, class_names=class_names)
+        img_paths = sorted(img_dir.glob("*.jpg"))
+        total = len(img_paths)
+        workers = min(max(1, int(cfg.num_workers)), max(1, total))
+        cpu_count = os.cpu_count() or 1
+        threads_per_worker = max(1, cpu_count // workers)
+        tta_info = " + TTA" if cfg.use_tta else ""
+
+        logger.info(
+            f"CPU 并行 tiling 评估: {total} 张原图, workers={workers}, "
+            f"threads/worker={threads_per_worker}, input_size={input_size}{tta_info}"
+        )
+
+        tasks = [(str(p), str(ann_dir)) for p in img_paths]
+        done = 0
+        with ProcessPoolExecutor(
+            max_workers=workers,
+            initializer=_init_tiled_worker,
+            initargs=(
+                str(ckpt_path),
+                num_classes,
+                input_size,
+                class_names,
+                cfg.use_tta,
+                threads_per_worker,
+            ),
+        ) as executor:
+            futures = [executor.submit(_evaluate_tiled_image_worker, task) for task in tasks]
+            for future in as_completed(futures):
+                result = future.result()
+                done += 1
+                if result.get("ok"):
+                    self._merge_evaluator_state(evaluator, result["state"])
+                elif result.get("reason") == "missing_gt":
+                    logger.warning(f"缺少 GT mask，跳过: {result.get('image')}")
+
+                if done % 50 == 0 or done == total:
+                    logger.info(f"  {done}/{total}")
+
         metrics = evaluator.compute()
         evaluator.print_table(metrics)
         evaluator.print_task_report(metrics)
@@ -189,26 +366,40 @@ class SegmentationInferencer:
             f"input_size={input_size}, batch_size={cfg.batch_size}"
         )
 
-        model, _ = build_segmentor_from_checkpoint(
-            ckpt,
-            device,
-            default_num_classes=NUM_CLASSES,
-            use_backbone_weight_from_cfg=True,
-            use_frozen_stages_from_cfg=True,
-        )
-
         if cfg.use_tiling:
             # 原图 tiling 推理：不经过 DataLoader，直接逐张读取原始分辨率图像
             split_key = "valid" if cfg.split in ("val", "valid") else cfg.split
             img_dir   = Path(cfg.data_root) / "img_dir" / split_key
             ann_dir   = Path(cfg.data_root) / "ann_dir" / split_key
-            metrics   = self._evaluate_tiled(
-                model, img_dir, ann_dir, device,
-                num_classes=NUM_CLASSES,
-                input_size=input_size,
-                class_names=class_names,
-            )
+            if device.type == "cpu" and cfg.num_workers > 1:
+                metrics = self._evaluate_tiled_parallel(
+                    ckpt_path, img_dir, ann_dir,
+                    num_classes=NUM_CLASSES,
+                    input_size=input_size,
+                    class_names=class_names,
+                )
+            else:
+                model, _ = build_segmentor_from_checkpoint(
+                    ckpt,
+                    device,
+                    default_num_classes=NUM_CLASSES,
+                    use_backbone_weight_from_cfg=True,
+                    use_frozen_stages_from_cfg=True,
+                )
+                metrics = self._evaluate_tiled(
+                    model, img_dir, ann_dir, device,
+                    num_classes=NUM_CLASSES,
+                    input_size=input_size,
+                    class_names=class_names,
+                )
         else:
+            model, _ = build_segmentor_from_checkpoint(
+                ckpt,
+                device,
+                default_num_classes=NUM_CLASSES,
+                use_backbone_weight_from_cfg=True,
+                use_frozen_stages_from_cfg=True,
+            )
             metrics = self._evaluate(model, loader, device, class_names=class_names)
 
         self._save_metrics(metrics, out_dir)
