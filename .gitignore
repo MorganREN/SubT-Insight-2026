@@ -219,3 +219,8 @@ outputs_old/
 *.json
 *.png
 outputs_*/
+
+# Local model weights and agent scratch state
+*.pth
+.codex
+.codex/

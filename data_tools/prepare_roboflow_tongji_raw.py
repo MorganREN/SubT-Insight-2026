@@ -22,14 +22,25 @@ Default class mapping:
     leakage     -> 3 leakage_w   (可用 --leakage_target ignore 改为 255)
     spalling    -> 5 lining_falling_off (可用 --spalling_target segment_damage 改为 6)
 
-Run (推荐的 final 配置：leakage ignore，spalling as segment_damage):
+Run (评估用：保留 leakage 统计，spalling as segment_damage，跳过查重):
+    conda run -n subt-2026 python data_tools/prepare_roboflow_tongji_raw.py \
+      --spalling_target segment_damage \
+      --leakage_target leakage_w \
+      --skip_duplicate_check \
+      --unfiltered_dir dataset/roboflow_tongji_tunnel_raw_spalling_as_segment_damage_unfiltered \
+      --clean_dir dataset/roboflow_tongji_tunnel_raw_spalling_as_segment_damage \
+      --report_csv dataset/roboflow_tongji_tunnel_duplicate_report_spalling_as_segment_damage.csv \
+      --summary_json dataset/roboflow_tongji_tunnel_duplicate_summary_spalling_as_segment_damage.json
+
+Run (训练用：忽略 Roboflow leakage，避免把单一 leakage 标签压到 leakage_w):
     conda run -n subt-2026 python data_tools/prepare_roboflow_tongji_raw.py \
       --spalling_target segment_damage \
       --leakage_target ignore \
-      --unfiltered_dir dataset/roboflow_tongji_tunnel_raw_final_unfiltered \
-      --clean_dir dataset/roboflow_tongji_tunnel_raw_final \
-      --report_csv dataset/roboflow_tongji_tunnel_duplicate_report_final.csv \
-      --summary_json dataset/roboflow_tongji_tunnel_duplicate_summary_final.json
+      --skip_duplicate_check \
+      --unfiltered_dir dataset/roboflow_tongji_tunnel_raw_spalling_segment_leakage_ignore_unfiltered \
+      --clean_dir dataset/roboflow_tongji_tunnel_raw_spalling_segment_leakage_ignore \
+      --report_csv dataset/roboflow_tongji_tunnel_duplicate_report_spalling_segment_leakage_ignore.csv \
+      --summary_json dataset/roboflow_tongji_tunnel_duplicate_summary_spalling_segment_leakage_ignore.json
 """
 
 from __future__ import annotations
@@ -397,6 +408,11 @@ def main() -> None:
     parser.add_argument("--ssim_threshold", type=float, default=0.97)
     parser.add_argument("--top_k", type=int, default=8)
     parser.add_argument(
+        "--skip_duplicate_check",
+        action="store_true",
+        help="Skip duplicate detection and copy all converted Roboflow pairs into the clean raw dataset.",
+    )
+    parser.add_argument(
         "--spalling_target",
         choices=["lining_falling_off", "segment_damage"],
         default="lining_falling_off",
@@ -425,24 +441,28 @@ def main() -> None:
     unfiltered_count = _convert_pairs(pairs, args.unfiltered_dir, mapping)
     print(f"Unfiltered raw dataset: {unfiltered_count} images -> {args.unfiltered_dir}")
 
-    print("Building reference fingerprints...")
-    references = _build_reference_fingerprints(args.reference_roots)
-    print(f"Reference images: {len(references)}")
-
     matches: list[DuplicateMatch] = []
-    for idx, (image_path, _mask_path) in enumerate(pairs, 1):
-        match = _find_duplicate(
-            image_path,
-            references,
-            phash_threshold=args.phash_threshold,
-            dhash_threshold=args.dhash_threshold,
-            ssim_threshold=args.ssim_threshold,
-            top_k=args.top_k,
-        )
-        if match is not None:
-            matches.append(match)
-        if idx % 50 == 0 or idx == len(pairs):
-            print(f"  checked {idx}/{len(pairs)} duplicates={len(matches)}")
+    references: list[ImageFingerprint] = []
+    if args.skip_duplicate_check:
+        print("Skipping duplicate check by request.")
+    else:
+        print("Building reference fingerprints...")
+        references = _build_reference_fingerprints(args.reference_roots)
+        print(f"Reference images: {len(references)}")
+
+        for idx, (image_path, _mask_path) in enumerate(pairs, 1):
+            match = _find_duplicate(
+                image_path,
+                references,
+                phash_threshold=args.phash_threshold,
+                dhash_threshold=args.dhash_threshold,
+                ssim_threshold=args.ssim_threshold,
+                top_k=args.top_k,
+            )
+            if match is not None:
+                matches.append(match)
+            if idx % 50 == 0 or idx == len(pairs):
+                print(f"  checked {idx}/{len(pairs)} duplicates={len(matches)}")
 
     duplicate_images = {m.roboflow_image for m in matches}
     clean_count = _convert_pairs(pairs, args.clean_dir, mapping, skip_images=duplicate_images)
@@ -465,6 +485,7 @@ def main() -> None:
         "clean_count": clean_count,
         "reference_roots": [str(p) for p in args.reference_roots],
         "reference_count": len(references),
+        "skip_duplicate_check": args.skip_duplicate_check,
         "thresholds": {
             "phash_threshold": args.phash_threshold,
             "dhash_threshold": args.dhash_threshold,
@@ -473,6 +494,7 @@ def main() -> None:
         },
         "class_mapping": mapping,
         "spalling_target": args.spalling_target,
+        "leakage_target": args.leakage_target,
         "duplicates_by_reference_root": by_root,
         "duplicates_by_decision": by_decision,
     }

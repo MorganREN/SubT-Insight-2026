@@ -163,6 +163,9 @@ def main():
     parser.add_argument("--batch_size", type=int, default=None)
     parser.add_argument("--num_workers", type=int, default=None)
     parser.add_argument("--epochs", type=int, default=None, help="单阶段训练总 epoch（use_stages=False 时生效）")
+    parser.add_argument("--max_steps", type=int, default=None, help="每个 epoch 最多训练 step 数（0=不限）")
+    parser.add_argument("--val_interval", type=int, default=None, help="验证间隔 epoch 数")
+    parser.add_argument("--stage_epochs", type=str, default=None, help="三阶段 epoch，格式如 '20,30,50'")
     parser.add_argument("--base_lr", type=float, default=None)
     parser.add_argument("--weight_decay", type=float, default=None)
     parser.add_argument("--routing_loss_weight", type=float, default=None)
@@ -195,6 +198,17 @@ def main():
             for pair in raw_weights.split(",")
             if ":" in pair
         }
+
+    if overrides.get("stage_epochs") is not None:
+        raw_epochs = overrides["stage_epochs"]
+        stage_epochs = tuple(
+            int(item.strip())
+            for item in raw_epochs.split(",")
+            if item.strip()
+        )
+        if len(stage_epochs) != 3:
+            raise ValueError("--stage_epochs 需要 3 个整数，例如 '20,30,50'")
+        overrides["stage_epochs"] = stage_epochs
 
     if overrides.get("extra_data_roots") is not None:
         overrides["extra_data_roots"] = tuple(overrides["extra_data_roots"])

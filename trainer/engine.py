@@ -338,12 +338,16 @@ class SegmentationTrainer:
         evaluator: SegEvaluator,
         device: torch.device,
         use_amp: bool,
+        max_steps: int = 0,
     ) -> tuple[float, dict]:
         model.eval()
         evaluator.reset()
         total_loss = 0.0
+        valid_batches = 0
 
-        for batch in loader:
+        for step, batch in enumerate(loader, start=1):
+            if max_steps > 0 and step > max_steps:
+                break
             images = batch[0].to(device, non_blocking=True)
             masks  = batch[1].to(device, non_blocking=True)
 
@@ -353,10 +357,11 @@ class SegmentationTrainer:
                 loss   = criterion(logits, masks)
 
             total_loss += loss.item()
+            valid_batches += 1
             evaluator.update(logits, masks)
 
         metrics  = evaluator.compute()
-        avg_loss = total_loss / max(len(loader), 1)
+        avg_loss = total_loss / max(valid_batches, 1)
         return avg_loss, metrics
 
     # ──────────────────────────────────────────────────────────────────────────
@@ -596,6 +601,7 @@ class SegmentationTrainer:
                     evaluator=evaluator,
                     device=device,
                     use_amp=use_amp,
+                    max_steps=cfg.max_steps,
                 )
                 evaluator.print_table(metrics)
                 evaluator.print_task_report(metrics)

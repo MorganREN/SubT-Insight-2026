@@ -9,7 +9,6 @@ Evaluation label space:
     2 leakage              <- model labels 2/3/4 merged here
     3 lining_falling_off   <- not present in Roboflow data (0 GT pixels)
     4 segment_damage       <- Roboflow spalling
-    4 segment_damage
 
 Run:
     conda run -n subt-2026 python scripts/infer_roboflow_small_models_merged.py --device cuda
@@ -71,7 +70,8 @@ def _to_serializable(value):
 
 
 def _remap_to_merged(mask: np.ndarray) -> np.ndarray:
-    out = np.zeros_like(mask, dtype=np.uint8)
+    out = np.full_like(mask, 255, dtype=np.uint8)
+    out[mask == 0] = 0
     out[mask == 1] = 1
     out[(mask == 2) | (mask == 3) | (mask == 4)] = 2
     out[mask == 5] = 3
@@ -149,9 +149,11 @@ def _summary_row(model_name: str, metrics: dict, out_dir: Path) -> dict:
         "crack_recall": pc["crack"]["Recall"],
         "leakage_recall": pc["leakage"]["Recall"],
         "lining_falling_off_recall": pc["lining_falling_off"]["Recall"],
+        "segment_damage_recall": pc["segment_damage"]["Recall"],
         "crack_precision": pc["crack"]["Precision"],
         "leakage_precision": pc["leakage"]["Precision"],
         "lining_falling_off_precision": pc["lining_falling_off"]["Precision"],
+        "segment_damage_precision": pc["segment_damage"]["Precision"],
     }
 
 
@@ -237,15 +239,22 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Evaluate all small checkpoints on Roboflow with merged leakage metrics.")
     parser.add_argument("--data_root", type=Path, default=Path("dataset/roboflow_tongji_tunnel_raw_spalling_as_segment_damage"))
     parser.add_argument("--split", default="train", choices=["train", "valid", "test"])
-    parser.add_argument("--output_root", type=Path, default=Path("outputs/roboflow_tongji_small"))
+    parser.add_argument("--output_root", type=Path, default=Path("outputs/roboflow_tongji_small_spalling_as_segment_damage"))
+    parser.add_argument("--ckpt", type=Path, default=None, help="Evaluate a single checkpoint instead of the built-in four small models.")
+    parser.add_argument("--model_name", default=None, help="Name for --ckpt results.")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--patch_batch_size", type=int, default=4)
     parser.add_argument("--use_tta", action="store_true")
     args = parser.parse_args()
 
     device = resolve_device(args.device, allow_mps=False, warn_mps_on_auto=False)
+    model_paths = (
+        {args.model_name or args.ckpt.parent.name: args.ckpt}
+        if args.ckpt is not None
+        else SMALL_MODELS
+    )
     rows = []
-    for model_name, ckpt_path in SMALL_MODELS.items():
+    for model_name, ckpt_path in model_paths.items():
         if not ckpt_path.exists():
             raise FileNotFoundError(f"missing checkpoint: {ckpt_path}")
         rows.append(
