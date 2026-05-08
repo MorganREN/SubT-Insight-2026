@@ -39,6 +39,7 @@ from torch.amp import autocast
 from criteria import SegEvaluator
 from trainer import SegmentationTrainer
 
+from scripts.build_tongji_full import ensure_symlink, merge_tongji_full
 from scripts.train import TMDS_RUN
 
 
@@ -62,39 +63,6 @@ SAMPLE_SEED     = 42
 
 
 # ── 数据准备：幂等 ──────────────────────────────────────────────────────────
-
-def _ensure_symlink(src: Path, dst: Path) -> None:
-    if dst.exists() or dst.is_symlink():
-        return
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    dst.symlink_to(src.resolve())
-
-
-def prepare_tongji_full_train() -> int:
-    """合并 tongji_data_awesome 的 train+valid 为一个 train split（符号链接）。"""
-    img_dst = TONGJI_FULL / "img_dir" / "train"
-    ann_dst = TONGJI_FULL / "ann_dir" / "train"
-    img_dst.mkdir(parents=True, exist_ok=True)
-    ann_dst.mkdir(parents=True, exist_ok=True)
-
-    n = 0
-    for split in ("train", "valid"):
-        src_imgs = TONGJI_SRC / "img_dir" / split
-        src_anns = TONGJI_SRC / "ann_dir" / split
-        if not src_imgs.exists():
-            logger.warning(f"源目录缺失: {src_imgs}")
-            continue
-        for img in sorted(src_imgs.glob("*.jpg")):
-            stem = img.stem
-            mask = src_anns / f"{stem}.png"
-            if not mask.exists():
-                continue
-            _ensure_symlink(img, img_dst / f"{stem}.jpg")
-            _ensure_symlink(mask, ann_dst / f"{stem}.png")
-            n += 1
-    logger.info(f"tongji_data_awesome_full 准备完成: {n} 张样本（仅 train split）")
-    return n
-
 
 def _convert_rfsrc(out_img_dir: Path, out_ann_dir: Path) -> list[str]:
     """
@@ -124,7 +92,7 @@ def _convert_rfsrc(out_img_dir: Path, out_ann_dir: Path) -> list[str]:
         out_img = out_img_dir / f"{new_stem}.jpg"
         out_ann = out_ann_dir / f"{new_stem}.png"
 
-        _ensure_symlink(img, out_img)
+        ensure_symlink(img, out_img)
 
         if not out_ann.exists():
             arr = np.array(Image.open(mask_src).convert("L"), dtype=np.uint8)
@@ -159,8 +127,8 @@ def _sample_crack_partial(out_img_dir: Path, out_ann_dir: Path,
             logger.warning(f"crack_partial 缺 mask，跳过: {stem}")
             continue
         new_stem = f"rfcrack_{stem}"
-        _ensure_symlink(img, out_img_dir / f"{new_stem}.jpg")
-        _ensure_symlink(mask, out_ann_dir / f"{new_stem}.png")
+        ensure_symlink(img, out_img_dir / f"{new_stem}.jpg")
+        ensure_symlink(mask, out_ann_dir / f"{new_stem}.png")
         names.append(new_stem)
 
     return names
@@ -269,7 +237,7 @@ def main():
     args = parser.parse_args()
 
     # 1. 幂等数据准备
-    prepare_tongji_full_train()
+    merge_tongji_full(TONGJI_SRC, TONGJI_FULL)
     prepare_finetune_valid()
     prepare_warmstart_ckpt()
 
