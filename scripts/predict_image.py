@@ -28,6 +28,8 @@ RUN = PredictConfig(
     output_dir="outputs/quantized_tmds_run",
     input_size=None,
     use_tiling=False,   # 是否使用 tiling 推理（适用于超大图，输出与 GT 在原始分辨率对齐）
+    # use label me
+    save_labelme = True,
 )
 
 

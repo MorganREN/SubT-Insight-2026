@@ -63,6 +63,11 @@ class BatchPredictConfig:
     input_size: int | None = None
     use_tiling: bool = True   # True = 对原图按群落参数做滑动窗口推理
 
+    # ── labelme JSON 输出（data_tools/mask_to_labelme.py） ──
+    save_labelme: bool = False             # True = 每张图同步导出 {stem}.json
+    labelme_epsilon: float = 1.0           # cv2.approxPolyDP 简化阈值；0 = 不简化
+    labelme_embed_image: bool = False      # True = 把原图 base64 嵌入 imageData
+
 
 RUN = BatchPredictConfig()
 
@@ -201,6 +206,13 @@ def run_batch(cfg: BatchPredictConfig) -> None:
                 metrics_path = out_dir / f"{stem_iou}_metrics.json"
                 with open(metrics_path, "w", encoding="utf-8") as f:
                     json.dump(_to_serializable(metrics), f, ensure_ascii=False, indent=2)
+                if cfg.save_labelme:
+                    from data_tools.mask_to_labelme import convert as _to_labelme
+                    _to_labelme(
+                        pred, image_path, out_dir / f"{image_path.stem}.json",
+                        epsilon=cfg.labelme_epsilon,
+                        embed_image_data=cfg.labelme_embed_image,
+                    )
                 results.append((miou, panel_path, mask_save_path))
                 logger.info(f"  {image_path.name:<20} {evaluator.summary(metrics)}")
             else:
@@ -218,6 +230,13 @@ def run_batch(cfg: BatchPredictConfig) -> None:
                 mask_save_path = out_dir / f"{image_path.stem}_pred_mask.png"
                 Image.fromarray(panel).save(panel_path)
                 Image.fromarray(pred, mode="L").save(mask_save_path)
+                if cfg.save_labelme:
+                    from data_tools.mask_to_labelme import convert as _to_labelme
+                    _to_labelme(
+                        pred, image_path, out_dir / f"{image_path.stem}.json",
+                        epsilon=cfg.labelme_epsilon,
+                        embed_image_data=cfg.labelme_embed_image,
+                    )
                 results.append((None, panel_path, mask_save_path))
                 logger.warning(f"  {image_path.name:<20} 未找到 GT mask，跳过 IoU")
 

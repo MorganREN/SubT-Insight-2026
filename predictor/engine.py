@@ -172,6 +172,17 @@ class ImagePredictor:
                 present_mask=present_mask,
                 pred_raw_mask=pred,
             )
+            if cfg.save_labelme:
+                from data_tools.mask_to_labelme import convert as _to_labelme
+                info = _to_labelme(
+                    pred, image_path, out_dir / f"{image_path.stem}.json",
+                    epsilon=cfg.labelme_epsilon,
+                    embed_image_data=cfg.labelme_embed_image,
+                )
+                logger.success(
+                    f"已保存 labelme JSON: {out_dir / f'{image_path.stem}.json'}  "
+                    f"shapes={info['n_shapes']}  per_class={info['per_class_count']}"
+                )
             logger.info(f"单图指标: {evaluator.summary(metric)}")
             evaluator.print_task_report(metric)
             metrics_path = out_dir / f"{image_path.stem}_metrics.json"
@@ -193,6 +204,17 @@ class ImagePredictor:
                 class_names=class_names,
                 class_colors=_DEFAULT_CLASS_COLORS,
             )
+            if cfg.save_labelme:
+                from data_tools.mask_to_labelme import convert as _to_labelme
+                info = _to_labelme(
+                    pred, image_path, out_dir / f"{image_path.stem}.json",
+                    epsilon=cfg.labelme_epsilon,
+                    embed_image_data=cfg.labelme_embed_image,
+                )
+                logger.success(
+                    f"已保存 labelme JSON: {out_dir / f'{image_path.stem}.json'}  "
+                    f"shapes={info['n_shapes']}  per_class={info['per_class_count']}"
+                )
             logger.warning("未找到对应 GT mask，跳过 IoU/Accuracy 计算（可在 RUN.mask 显式指定）")
 
         logger.success("=" * 70)
