@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional, Sequence, Union
 
+import numpy as np
 import torch
-from torch.utils.data import DataLoader
+from PIL import Image
+from torch.utils.data import DataLoader, WeightedRandomSampler
 
 from .augmentation import SegmentationAugmentation
 from .dataset import TunnelDefectDataset
@@ -40,6 +42,9 @@ class SegmentationDataLoaderFactory:
     splits : list[str]
         要创建 DataLoader 的 split 列表。
         默认 ["train", "val", "test"]。
+    rare_class_weights : dict[int, float] | None
+        train split 的稀有类采样权重字典，key 为类别 ID，value 为权重倍数。
+        每个样本的权重取其包含的所有稀有类权重的最大值，避免同时含多稀有类时权重叠加过强。
 
     Attributes
     ----------
@@ -60,17 +65,19 @@ class SegmentationDataLoaderFactory:
         splits: Optional[List[str]] = None,
         use_skeleton: bool = False,
         skel_dir: Optional[str] = None,
+        rare_class_weights: Optional[dict[int, float]] = None,
     ):
         if isinstance(data_roots, str):
             data_roots = [data_roots]
-        self.data_roots  = list(data_roots)
-        self.batch_size  = batch_size
+        self.data_roots = list(data_roots)
+        self.batch_size = batch_size
         self.num_workers = num_workers
-        self.input_size  = input_size
-        self.aug_kwargs  = aug_kwargs or {}
-        self.splits      = splits or ["train", "val", "test"]
+        self.input_size = input_size
+        self.aug_kwargs = aug_kwargs or {}
+        self.splits = splits or ["train", "val", "test"]
         self.use_skeleton = use_skeleton
-        self.skel_dir     = skel_dir
+        self.skel_dir = skel_dir
+        self.rare_class_weights = rare_class_weights
 
         # 自动检测 pin_memory
         if pin_memory is None:
@@ -117,14 +124,52 @@ class SegmentationDataLoaderFactory:
     def _make_loader(self, dataset: TunnelDefectDataset, split: str) -> DataLoader:
         """为给定 split 创建 DataLoader。"""
         is_train = (split == "train")
+        sampler = None
+        shuffle = is_train
+
+        if is_train and self.rare_class_weights:
+            sampler = self._build_rare_class_sampler(dataset, self.rare_class_weights)
+            shuffle = False  # sampler 与 shuffle 互斥
+
         return DataLoader(
             dataset,
             batch_size=self.batch_size,
-            shuffle=is_train,
+            shuffle=shuffle,
+            sampler=sampler,
             num_workers=self.num_workers,
             pin_memory=self.pin_memory,
             persistent_workers=self.persistent_workers,
             drop_last=is_train,         # train 丢弃不足一批的尾部样本
+        )
+
+    @staticmethod
+    def _build_rare_class_sampler(
+        dataset: TunnelDefectDataset,
+        rare_class_weights: Dict[int, float],
+    ) -> WeightedRandomSampler:
+        """扫描 train mask，为含稀有类的样本提高采样概率。"""
+        weights = []
+        for _, ann_path, *_ in dataset.pairs:
+            mask = np.array(Image.open(ann_path).convert("L"), dtype=np.uint8)
+            unique_classes = set(mask.flat)
+            sample_weight = max(
+                (rare_class_weights[class_id] for class_id in unique_classes if class_id in rare_class_weights),
+                default=1.0,
+            )
+            weights.append(sample_weight)
+
+        boosted = sum(weight > 1.0 for weight in weights)
+        summary = ", ".join(
+            f"class {class_id}: {weight}x"
+            for class_id, weight in sorted(rare_class_weights.items())
+        )
+        logger.info(
+            f"WeightedRandomSampler 已启用: {boosted}/{len(weights)} 张样本被增强采样 ({summary})"
+        )
+        return WeightedRandomSampler(
+            weights=weights,
+            num_samples=len(weights),
+            replacement=True,
         )
 
     def get(self, split: str) -> DataLoader:
@@ -174,6 +219,7 @@ def build_dataloaders(
     aug_kwargs: Optional[dict] = None,
     use_skeleton: bool = False,
     skel_dir: Optional[str] = None,
+    rare_class_weights: Optional[dict[int, float]] = None,
 ) -> Dict[str, DataLoader]:
     """一行代码获取所有 split 的 DataLoader 字典。"""
     factory = SegmentationDataLoaderFactory(
@@ -186,5 +232,6 @@ def build_dataloaders(
         splits=splits or ["train", "val", "test"],
         use_skeleton=use_skeleton,
         skel_dir=skel_dir,
+        rare_class_weights=rare_class_weights,
     )
     return {split: factory.get(split) for split in factory.splits}

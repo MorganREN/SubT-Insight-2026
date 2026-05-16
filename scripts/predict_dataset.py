@@ -17,6 +17,10 @@ predict_dataset.py
 
 from __future__ import annotations
 
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
+
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -59,8 +63,27 @@ class BatchPredictConfig:
     input_size: int | None = None
     use_tiling: bool = True   # True = 对原图按群落参数做滑动窗口推理
 
+    # ── labelme JSON 输出（data_tools/mask_to_labelme.py） ──
+    save_labelme: bool = False             # True = 每张图同步导出 {stem}.json
+    labelme_epsilon: float = 1.0           # cv2.approxPolyDP 简化阈值；0 = 不简化
+    labelme_embed_image: bool = False      # True = 把原图 base64 嵌入 imageData
+
 
 RUN = BatchPredictConfig()
+
+
+def _to_serializable(value):
+    if isinstance(value, dict):
+        return {k: _to_serializable(v) for k, v in value.items()}
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, (np.floating,)):
+        return float(value)
+    if isinstance(value, (np.integer,)):
+        return int(value)
+    if isinstance(value, list):
+        return [_to_serializable(v) for v in value]
+    return value
 
 
 # ---------------------------------------------------------------------------
@@ -120,6 +143,11 @@ def run_batch(cfg: BatchPredictConfig) -> None:
             continue
 
         logger.info(f"[{split}] 共 {len(image_paths)} 张图片 -> {out_dir}")
+        split_evaluator = SegEvaluator(
+            num_classes=num_classes,
+            class_names=class_names,
+            ignore_index=255,
+        )
 
         # (miou_or_None, panel_path, mask_path)
         results: list[tuple[float | None, Path, Path]] = []
@@ -151,6 +179,7 @@ def run_batch(cfg: BatchPredictConfig) -> None:
                 )
                 evaluator.update(pred[np.newaxis], gt_mask[np.newaxis])
                 metrics = evaluator.compute()
+                split_evaluator.update(pred[np.newaxis], gt_mask[np.newaxis])
                 miou = float(metrics["mIoU"])
                 present_mask = np.bincount(
                     gt_mask[gt_mask != 255].ravel(), minlength=num_classes
@@ -174,8 +203,18 @@ def run_batch(cfg: BatchPredictConfig) -> None:
                 mask_save_path = out_dir / f"{stem_iou}_pred_mask.png"
                 Image.fromarray(panel).save(panel_path)
                 Image.fromarray(pred, mode="L").save(mask_save_path)
+                metrics_path = out_dir / f"{stem_iou}_metrics.json"
+                with open(metrics_path, "w", encoding="utf-8") as f:
+                    json.dump(_to_serializable(metrics), f, ensure_ascii=False, indent=2)
+                if cfg.save_labelme:
+                    from data_tools.mask_to_labelme import convert as _to_labelme
+                    _to_labelme(
+                        pred, image_path, out_dir / f"{image_path.stem}.json",
+                        epsilon=cfg.labelme_epsilon,
+                        embed_image_data=cfg.labelme_embed_image,
+                    )
                 results.append((miou, panel_path, mask_save_path))
-                logger.info(f"  {image_path.name:<20} mIoU={miou * 100:.2f}%")
+                logger.info(f"  {image_path.name:<20} {evaluator.summary(metrics)}")
             else:
                 _grid = _build_panel_2x3(
                     images=[image_np, _blank_like(image_np), _blank_like(image_np),
@@ -191,6 +230,13 @@ def run_batch(cfg: BatchPredictConfig) -> None:
                 mask_save_path = out_dir / f"{image_path.stem}_pred_mask.png"
                 Image.fromarray(panel).save(panel_path)
                 Image.fromarray(pred, mode="L").save(mask_save_path)
+                if cfg.save_labelme:
+                    from data_tools.mask_to_labelme import convert as _to_labelme
+                    _to_labelme(
+                        pred, image_path, out_dir / f"{image_path.stem}.json",
+                        epsilon=cfg.labelme_epsilon,
+                        embed_image_data=cfg.labelme_embed_image,
+                    )
                 results.append((None, panel_path, mask_save_path))
                 logger.warning(f"  {image_path.name:<20} 未找到 GT mask，跳过 IoU")
 
@@ -205,6 +251,15 @@ def run_batch(cfg: BatchPredictConfig) -> None:
                 panel_path.rename(panel_path.parent / f"rank{rank:03d}_{panel_path.name}")
             if mask_path.exists():
                 mask_path.rename(mask_path.parent / f"rank{rank:03d}_{mask_path.name}")
+
+        if split_evaluator.confusion_matrix.sum() > 0:
+            split_metrics = split_evaluator.compute()
+            split_evaluator.print_table(split_metrics)
+            split_evaluator.print_task_report(split_metrics)
+            split_metrics_path = out_dir / "split_metrics.json"
+            with open(split_metrics_path, "w", encoding="utf-8") as f:
+                json.dump(_to_serializable(split_metrics), f, ensure_ascii=False, indent=2)
+            logger.info(f"[{split}] 聚合 metrics 已保存: {split_metrics_path}")
 
         logger.success(f"[{split}] 完成，已按 mIoU 排序，结果: {out_dir.resolve()}")
 

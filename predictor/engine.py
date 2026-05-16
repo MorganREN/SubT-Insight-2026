@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
 
@@ -52,12 +53,21 @@ class ImagePredictor:
             ignore_index=ignore_index,
         )
         evaluator.update(pred[np.newaxis, ...], target[np.newaxis, ...])
-        metrics = evaluator.compute()
-        return {
-            "mIoU": float(metrics["mIoU"]),
-            "aAcc": float(metrics["aAcc"]),
-            "IoU": metrics["IoU"],
-        }
+        return evaluator.compute(), evaluator
+
+    @staticmethod
+    def _to_serializable(value):
+        if isinstance(value, dict):
+            return {k: ImagePredictor._to_serializable(v) for k, v in value.items()}
+        if isinstance(value, np.ndarray):
+            return value.tolist()
+        if isinstance(value, (np.floating,)):
+            return float(value)
+        if isinstance(value, (np.integer,)):
+            return int(value)
+        if isinstance(value, list):
+            return [ImagePredictor._to_serializable(v) for v in value]
+        return value
 
     @torch.no_grad()
     def run(self):
@@ -106,9 +116,17 @@ class ImagePredictor:
         logger.info(f"图片信息: {W}×{H} px，磁盘大小 {file_size_kb:.1f} KB")
 
         if cfg.use_tiling:
-            logger.info("使用 Tiling 推理（高斯加权拼合）")
+            tta_info = " + TTA" if cfg.use_tta else ""
+            logger.info(f"使用 Tiling 推理（高斯加权拼合{tta_info}）")
             t_start = time.perf_counter()
-            pred = tiled_predict(model, image_np, device, num_classes, input_size)
+            pred = tiled_predict(
+                model,
+                image_np,
+                device,
+                num_classes,
+                input_size,
+                use_tta=cfg.use_tta,
+            )
             infer_ms = (time.perf_counter() - t_start) * 1000
         else:
             _, input_tensor = preprocess_image(image_path, input_size=input_size)
@@ -128,7 +146,7 @@ class ImagePredictor:
             gt_overlay = blend_overlay(image_np, gt_color, alpha=0.45)
             error_overlay = build_error_overlay(image_np, pred, gt_mask)
 
-            metric = self._compute_single_image_metrics(
+            metric, evaluator = self._compute_single_image_metrics(
                 pred,
                 gt_mask,
                 num_classes=num_classes,
@@ -154,9 +172,28 @@ class ImagePredictor:
                 present_mask=present_mask,
                 pred_raw_mask=pred,
             )
-            logger.info(
-                f"单图指标: mIoU={metric['mIoU']*100:.2f}%  Accuracy={metric['aAcc']*100:.2f}%"
-            )
+            if cfg.save_labelme:
+                from data_tools.mask_to_labelme import convert as _to_labelme
+                info = _to_labelme(
+                    pred, image_path, out_dir / f"{image_path.stem}.json",
+                    epsilon=cfg.labelme_epsilon,
+                    embed_image_data=cfg.labelme_embed_image,
+                )
+                logger.success(
+                    f"已保存 labelme JSON: {out_dir / f'{image_path.stem}.json'}  "
+                    f"shapes={info['n_shapes']}  per_class={info['per_class_count']}"
+                )
+            logger.info(f"单图指标: {evaluator.summary(metric)}")
+            evaluator.print_task_report(metric)
+            metrics_path = out_dir / f"{image_path.stem}_metrics.json"
+            with open(metrics_path, "w", encoding="utf-8") as f:
+                json.dump(
+                    self._to_serializable(metric),
+                    f,
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            logger.info(f"单图 metrics 已保存: {metrics_path}")
         else:
             save_outputs_basic(
                 image_path=image_path,
@@ -167,6 +204,17 @@ class ImagePredictor:
                 class_names=class_names,
                 class_colors=_DEFAULT_CLASS_COLORS,
             )
+            if cfg.save_labelme:
+                from data_tools.mask_to_labelme import convert as _to_labelme
+                info = _to_labelme(
+                    pred, image_path, out_dir / f"{image_path.stem}.json",
+                    epsilon=cfg.labelme_epsilon,
+                    embed_image_data=cfg.labelme_embed_image,
+                )
+                logger.success(
+                    f"已保存 labelme JSON: {out_dir / f'{image_path.stem}.json'}  "
+                    f"shapes={info['n_shapes']}  per_class={info['per_class_count']}"
+                )
             logger.warning("未找到对应 GT mask，跳过 IoU/Accuracy 计算（可在 RUN.mask 显式指定）")
 
         logger.success("=" * 70)

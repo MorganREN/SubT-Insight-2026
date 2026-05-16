@@ -20,6 +20,9 @@ train.py
 
 from __future__ import annotations
 
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
+
 import argparse
 import dataclasses
 
@@ -104,6 +107,7 @@ TMDS_RUN = TrainConfig(
     dsa_num_heads        = 4,
     dsa_num_strips       = 4,
     dsa_points_per_strip = 8,
+    use_cmim            = True,
 
     # ── 数据 ─────────────────────────────────────────────────────────────────
     input_size  = 512,
@@ -131,8 +135,8 @@ TMDS_RUN = TrainConfig(
     # ── 通用训练超参数 ────────────────────────────────────────────────────────
     use_class_weights = True,
     optimizer_type    = "adamw",
-    weight_decay      = 4e-4,
-    backbone_lr_mult  = 0.005,
+    weight_decay      = 1e-2,
+    backbone_lr_mult  = 0.05,
     scheduler         = "cosine",
     clip_grad         = 1.0,
     val_interval      = 5,        # 三阶段训练共 100 epoch，每 5 epoch 验证一次
@@ -144,13 +148,34 @@ def main():
     parser = argparse.ArgumentParser(description="SubT-Insight 训练入口")
     parser.add_argument("--use_tmds", action="store_true", help="使用 TMDS_RUN 配置（TMDSSegmentor）")
     parser.add_argument("--data_root", type=str, default=None)
+    parser.add_argument(
+        "--extra_data_roots", nargs="*", type=str, default=None, metavar="DIR",
+        help="额外训练数据根目录（可多个），val split 不存在时自动跳过",
+    )
     parser.add_argument("--output_dir", type=str, default=None)
     parser.add_argument("--backbone_type", type=str, default=None, choices=["convnext_tiny", "vit_s16plus"])
     parser.add_argument("--backbone_weight_path", type=str, default=None)
+    parser.add_argument("--head_channels", type=int, default=None)
+    parser.add_argument("--mrm_stage_idx", type=int, default=None, choices=[0, 1, 2, 3],
+                        help="MRM 输入骨干阶段：0=C1/H4, 1=C2/H8, 2=C3/H16(默认), 3=C4/H32")
+    parser.add_argument("--use_cmim", action=argparse.BooleanOptionalAction, default=None,
+                        help="TMDS 是否启用跨形态交互模块 CMIM")
     parser.add_argument("--batch_size", type=int, default=None)
     parser.add_argument("--num_workers", type=int, default=None)
     parser.add_argument("--epochs", type=int, default=None, help="单阶段训练总 epoch（use_stages=False 时生效）")
+    parser.add_argument("--max_steps", type=int, default=None, help="每个 epoch 最多训练 step 数（0=不限）")
+    parser.add_argument("--val_interval", type=int, default=None, help="验证间隔 epoch 数")
+    parser.add_argument("--stage_epochs", type=str, default=None, help="三阶段 epoch，格式如 '20,30,50'")
     parser.add_argument("--base_lr", type=float, default=None)
+    parser.add_argument("--weight_decay", type=float, default=None)
+    parser.add_argument("--routing_loss_weight", type=float, default=None)
+    parser.add_argument("--aux_loss_weight", type=float, default=None)
+    parser.add_argument(
+        "--rare_class_weights",
+        type=str,
+        default=None,
+        help="稀有类采样权重，格式如 '1:3.0,3:2.0'；不传则关闭增强采样",
+    )
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--device", type=str, default=None)
     parser.add_argument("--resume", type=str, default=None)
@@ -165,6 +190,29 @@ def main():
         k: v for k, v in vars(args).items()
         if v is not None and k != "use_tmds" and k in base_cfg.__dataclass_fields__
     }
+
+    if overrides.get("rare_class_weights") is not None:
+        raw_weights = overrides["rare_class_weights"]
+        overrides["rare_class_weights"] = {
+            int(pair.split(":")[0]): float(pair.split(":")[1])
+            for pair in raw_weights.split(",")
+            if ":" in pair
+        }
+
+    if overrides.get("stage_epochs") is not None:
+        raw_epochs = overrides["stage_epochs"]
+        stage_epochs = tuple(
+            int(item.strip())
+            for item in raw_epochs.split(",")
+            if item.strip()
+        )
+        if len(stage_epochs) != 3:
+            raise ValueError("--stage_epochs 需要 3 个整数，例如 '20,30,50'")
+        overrides["stage_epochs"] = stage_epochs
+
+    if overrides.get("extra_data_roots") is not None:
+        overrides["extra_data_roots"] = tuple(overrides["extra_data_roots"])
+
     cfg = dataclasses.replace(base_cfg, **overrides)
 
     SegmentationTrainer(cfg).run()

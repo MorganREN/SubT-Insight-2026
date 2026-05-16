@@ -8,6 +8,7 @@ from dataload import NUM_CLASSES
 @dataclass
 class TrainConfig:
     data_root: str = "dataset/tongji_data"
+    extra_data_roots: tuple[str, ...] = ()   # 追加的额外训练数据根目录，val split 不存在时自动跳过
     output_dir: str = "outputs/train_run"
     device: str = "auto"
     resume: str = ""
@@ -24,6 +25,7 @@ class TrainConfig:
     input_size: int = 512
     batch_size: int = 4
     num_workers: int = 2
+    rare_class_weights: dict[int, float] | None = None  # {class_id: weight}，None = 均匀采样
 
     loss_name: str = "ce+dice"
     loss_weights: tuple[float, ...] | None = None  # None = 使用 loss_factory 内置默认权重
@@ -49,6 +51,8 @@ class TrainConfig:
     dsa_num_heads:       int = 4    # 可变形条状注意力的头数
     dsa_num_strips:      int = 4    # 每头的条数（方向数）
     dsa_points_per_strip: int = 8   # 每条的采样点数
+    mrm_stage_idx:       int = 2    # MRM 使用的骨干阶段索引（0=C1/H4, 1=C2/H8, 2=C3/H16, 3=C4/H32）
+    use_cmim:            bool = True  # True = 启用跨形态交互模块（CMIM）
 
     # 三阶段训练（三元组分别对应 Stage1 / Stage2 / Stage3）
     # 总 epoch = sum(stage_epochs)，会覆盖 epochs 字段
