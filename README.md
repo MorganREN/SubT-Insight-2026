@@ -16,6 +16,7 @@ Subterranean Insight for 2026 — 复杂环境下隧道衬砌智能多缺陷检�
 - [训练](#训练)
 - [评估](#评估)
 - [推理](#推理)
+  - [推理结果转 labelme 标注](#推理结果转-labelme-标注可选)
 - [进阶：模型量化](#进阶模型量化)
 - [常用命令](#常用命令)
 
@@ -319,6 +320,60 @@ python predict_dataset.py
 | `ckpt` | checkpoint 路径 |
 | `use_tiling` | 是否使用 tiling 推理 |
 
+### 推理结果转 labelme 标注（可选）
+
+把推理生成的类别索引 mask（`{stem}_pred_mask.png`）反向转成 labelme 5.x JSON，
+方便人工在 labelme 里复核 / 微调，并把它当作下一轮迭代的种子标注。
+所有类别一律 `shape_type="polygon"`，标签名对齐 [dataset/tongji/](dataset/tongji/) 原始风格
+（`crack` / `leakageB` / `leakageW` / `leakageG` / `lining falling off` / `segment damage`）。
+
+**方式 A：推理时同步生成**
+
+`predict_image.py` 与 `predict_dataset.py` 的配置（`PredictConfig` / `BatchPredictConfig`）
+新增三个字段：
+
+| 字段 | 默认 | 说明 |
+|---|---|---|
+| `save_labelme` | `False` | 设为 `True` 即在每张图推理后写出 `{image_stem}.json` |
+| `labelme_epsilon` | `1.0` | `cv2.approxPolyDP` 简化阈值（像素）；`0` 表示不简化 |
+| `labelme_embed_image` | `False` | `True` 时把原图 base64 嵌入 `imageData` 字段（JSON 自包含，文件较大） |
+
+**方式 B：独立工具（已有 mask 也能补生成 JSON）**
+
+```bash
+# 单图模式
+python data_tools/mask_to_labelme.py \
+    --mask  outputs/.../{stem}_pred_mask.png \
+    --image dataset/tongji_data_raw/img_dir/train/{stem}.jpg \
+    --out   outputs/.../{stem}.json
+
+# 批量模式：自动剥离 rank{N}_ / _iou{F} 等装饰，按 stem 与原图配对
+python data_tools/mask_to_labelme.py \
+    --mask_dir  outputs/ablation_tmds_full_small/predict_dataset/train \
+    --image_dir dataset/tongji_data_raw/img_dir/train \
+    --out_dir   outputs/ablation_tmds_full_small/predict_dataset_labelme/train
+```
+
+**输出 JSON schema**（labelme 5.x，老版 labelme 也能打开）：
+
+```json
+{
+  "version": "5.4.1",
+  "flags": {},
+  "shapes": [
+    {"label": "crack", "points": [[x,y], ...],
+     "group_id": null, "shape_type": "polygon", "flags": {}}
+  ],
+  "imagePath": "C100.jpg",
+  "imageData": null,
+  "imageHeight": 2177,
+  "imageWidth": 2184
+}
+```
+
+`imagePath` 自动写为相对于 JSON 所在目录的相对路径，便于 labelme 打开 JSON 时定位原图；
+若 JSON 与原图不在邻近目录，建议用 `--embed_image_data` / `labelme_embed_image=True` 让 JSON 自包含。
+
 ---
 
 ## 进阶：模型量化
@@ -366,6 +421,14 @@ python infer.py                        # 标准评估
 # ── 推理 ─────────────────────────────────────────────────────────────────────
 python predict_image.py                # 单图推理
 python predict_dataset.py             # 批量推理（按 mIoU 排名输出）
+
+# ── 推理结果转 labelme 标注（可选） ───────────────────────────────────────────
+# 方式 A：在 predict_image.py / predict_dataset.py 的 RUN 中设 save_labelme=True
+# 方式 B：对已有 *_pred_mask.png 批量补生成
+python data_tools/mask_to_labelme.py \
+    --mask_dir  outputs/<run>/predict_dataset/<split> \
+    --image_dir dataset/tongji_data_raw/img_dir/<split> \
+    --out_dir   outputs/<run>/predict_dataset_labelme/<split>
 
 # ── 量化（进阶） ──────────────────────────────────────────────────────────────
 python quantize.py
