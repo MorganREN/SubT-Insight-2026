@@ -1,0 +1,200 @@
+% paper_figures/dsa_arch.tex
+%
+% DSA Decoder 架构图 — TikZ 源（两个 panel）。
+%
+% 在论文里使用：
+%   \usepackage{tikz}
+%   \usetikzlibrary{arrows.meta,positioning,calc,fit,backgrounds}
+%   \input{paper_figures/dsa_arch.tex}
+%
+% 独立编译验证（需 standalone class）：
+%   \documentclass[tikz,border=8pt]{standalone}
+%   \usepackage{tikz}
+%   \usetikzlibrary{arrows.meta,positioning,calc,fit,backgrounds}
+%   \begin{document}
+%     \input{paper_figures/dsa_arch.tex}
+%   \end{document}
+%
+% 节点命名后缀：A = panel A 整体管线、B = panel B DSA 内部
+% 需要调坐标 / 颜色 / 大小，直接在下面 \tikzset 与节点定义里改即可。
+
+% ──────────────────────────────────────────────────────────────────────────────
+% 全局样式定义（两 panel 共用）
+% ──────────────────────────────────────────────────────────────────────────────
+\tikzset{
+    blk/.style       = {draw, rounded corners=2pt, minimum height=8mm,
+                        minimum width=18mm, align=center, font=\small,
+                        inner sep=2pt, line width=0.6pt},
+    input/.style     = {blk, fill=blue!8},
+    fpn/.style       = {blk, fill=yellow!18},
+    op/.style        = {blk, fill=orange!25},
+    norm/.style      = {blk, fill=black!6},
+    dsa/.style       = {blk, fill=green!20, line width=1.0pt},
+    output/.style    = {blk, fill=orange!35, line width=0.8pt},
+    sumnode/.style   = {draw, circle, inner sep=0pt, minimum size=5mm,
+                        font=\large, fill=white},
+    arr/.style       = {-{Latex[length=2mm,width=1.5mm]}, line width=0.45pt},
+    resarr/.style    = {arr, dashed, gray!70},
+    tlabel/.style    = {font=\scriptsize, gray!70!black},
+}
+
+% ──────────────────────────────────────────────────────────────────────────────
+% Panel A — DSA Decoder 整体管线
+% ──────────────────────────────────────────────────────────────────────────────
+\begin{tikzpicture}[x=10mm, y=10mm]
+
+    % 4 个 backbone stage（自上而下 C4 → C1）
+    \node[input] (in-c4) at (0, 4.5) {C4\\ 768\,@H/32};
+    \node[input] (in-c3) at (0, 3.0) {C3\\ 384\,@H/16};
+    \node[input] (in-c2) at (0, 1.5) {C2\\ 192\,@H/8};
+    \node[input] (in-c1) at (0, 0.0) {C1\\ 96\,@H/4};
+
+    % lateral 1x1 convs
+    \foreach \i/\y in {c4/4.5, c3/3.0, c2/1.5, c1/0.0} {
+        \node[fpn] (lat-\i) at (3, \y) {lateral\\ 1$\times$1 conv};
+        \draw[arr] (in-\i.east) -- (lat-\i.west);
+    }
+
+    % 自顶向下 add（lateral 层内）
+    \foreach \i/\j in {c4/c3, c3/c2, c2/c1} {
+        \draw[arr] (lat-\i.south) -- node[tlabel, right] {up$\times$2 + add}
+            (lat-\j.north);
+    }
+
+    % FPN 3x3 convs
+    \foreach \i/\y in {c4/4.5, c3/3.0, c2/1.5, c1/0.0} {
+        \node[fpn] (fpn-\i) at (5.6, \y) {FPN\\ 3$\times$3 conv};
+        \draw[arr] (lat-\i.east) -- (fpn-\i.west);
+    }
+
+    % ⊕ 求和（在 C1 行右侧）
+    \node[sumnode] (sumA) at (8.3, 0.0) {$\oplus$};
+    \node[tlabel, below=2pt of sumA] {fused @H/4};
+
+    % FPN → sum（C4..C2 走曲线 + 标注 "up$\to$H/4"，C1 直走）
+    \draw[arr] (fpn-c4.east) to[out=0, in=120]
+        node[tlabel, midway, above] {up$\to$H/4} (sumA.north);
+    \draw[arr] (fpn-c3.east) to[out=0, in=120]
+        node[tlabel, midway, above] {up$\to$H/4} (sumA.north west);
+    \draw[arr] (fpn-c2.east) to[out=0, in=145]
+        node[tlabel, midway, above] {up$\to$H/4} (sumA.west);
+    \draw[arr] (fpn-c1.east) -- (sumA.west);
+
+    % AvgPool ↓2
+    \node[norm] (pool) at (10.5, 0.0) {AvgPool $\downarrow$2\\ \scriptsize(memory-saving)};
+    \draw[arr] (sumA.east) -- (pool.west);
+
+    % DSA Module
+    \node[dsa, minimum width=22mm, minimum height=12mm] (dsa) at (13.0, 0.0)
+        {\textbf{DSA Module}\\ (strip attention)};
+    \draw[arr] (pool.east) -- (dsa.west);
+    \node[tlabel, below=2pt of dsa] {[B, C, H/8, W/8]};
+
+    % Upsample / out_norm / 输出 F_L（垂直堆叠在 DSA 上方）
+    \node[norm] (up) at (13.0, 1.6) {Upsample $\uparrow$2};
+    \node[norm] (onorm) at (13.0, 2.9) {out\_norm\\ (GroupNorm)};
+    \node[output] (out) at (13.0, 4.3) {$F_L$\\ [B, 160, H/4, W/4]};
+
+    \draw[arr] (dsa.north) -- (up.south);
+    \draw[arr] (up.north) -- (onorm.south);
+    \draw[arr] (onorm.north) -- (out.south);
+
+    % 标题
+    \node[font=\small\bfseries, above=4mm of in-c4.north east, xshift=40mm]
+        {DSA Decoder --- Overall Pipeline (FPN + Strip Attention)};
+
+\end{tikzpicture}
+
+
+% ──────────────────────────────────────────────────────────────────────────────
+% Panel B — DSA 模块内部机制
+% ──────────────────────────────────────────────────────────────────────────────
+\vspace{8mm}
+\begin{tikzpicture}[x=10mm, y=10mm]
+
+    % Input X（顶部）
+    \node[input, minimum width=28mm] (in) at (5.5, 8.5)
+        {Input X \quad [B, C, H/8, W/8]};
+
+    % 4 条平行分支
+    \node[fpn] (dp)   at (0.0, 7.0) {direction\_pred\\ AvgPool $\to$ Linear};
+    \node[fpn] (qp)   at (3.5, 7.0) {Q proj 1$\times$1};
+    \node[fpn] (kp)   at (7.0, 7.0) {K proj 1$\times$1};
+    \node[fpn] (vp)   at (10.5, 7.0) {V proj 1$\times$1};
+
+    \foreach \b in {dp, qp, kp, vp} {
+        \draw[arr] (in.south) to[out=-110, in=90] (\b.north);
+    }
+
+    % direction_pred 之后：reshape + ℓ2-norm
+    \node[norm] (norm) at (0.0, 5.5)
+        {reshape $\to$ $\ell_2$-norm\\ $\hat{\mathbf d}\in\mathbb R^{nh\cdot ns\cdot 2}$};
+    \draw[arr] (dp.south) -- (norm.north);
+
+    % base grid + t·offset
+    \node[norm] (grid) at (2.5, 5.5) {base grid +\\ $t\cdot$offset};
+
+    % sampling grid sg
+    \node[op] (sg) at (1.5, 4.0)
+        {sampling grid $\mathbf{sg}$\\ {\scriptsize[B, nh, ns, HW, M, 2]}};
+    \draw[arr] (norm.south) -- (sg.north west);
+    \draw[arr] (grid.south) -- (sg.north east);
+
+    % grid_sample on K and V
+    \node[op] (sK) at (6.0, 4.0) {grid\_sample\\ $\to s\!K$};
+    \node[op] (sV) at (10.0, 4.0) {grid\_sample\\ $\to s\!V$};
+    \draw[arr] (sg.east) -- node[tlabel, above] {sg} (sK.west);
+    \draw[arr] (sg.east) to[out=-30, in=210]
+        node[tlabel, below] {sg} (sV.west);
+    \draw[arr] (kp.south) -- (sK.north);
+    \draw[arr] (vp.south) -- (sV.north);
+
+    % 注意力打分
+    \node[op] (attn) at (4.0, 2.3)
+        {$Q \cdot s\!K^{\top}/\sqrt{d_h}$\\ $\to$ softmax $\to$ attn};
+    \draw[arr] (qp.south) to[out=-90, in=120]
+        node[tlabel, left] {Q} (attn.north);
+    \draw[arr] (sK.south) to[out=-90, in=60]
+        node[tlabel, right] {$s\!K$} (attn.north);
+
+    % attn × sV → out per head
+    \node[op] (outh) at (7.5, 1.0)
+        {attn $\cdot s\!V$\\ $\to$ out per head\\ {\scriptsize[B, HW, hd]}};
+    \draw[arr] (attn.south) to[out=-30, in=180]
+        node[tlabel, above] {attn} (outh.west);
+    \draw[arr] (sV.south) to[out=-90, in=30]
+        node[tlabel, right] {$s\!V$} (outh.north east);
+
+    % concat heads
+    \node[fpn] (cat) at (4.5, -0.3) {concat heads\\ {\scriptsize[B, C, H/8, W/8]}};
+    \draw[arr] (outh.south) to[out=-150, in=0] (cat.east);
+
+    % GroupNorm
+    \node[norm] (gn) at (1.5, -1.5) {GroupNorm};
+    \draw[arr] (cat.south) to[out=-150, in=70] (gn.north);
+
+    % out_proj 1x1
+    \node[fpn] (op) at (4.0, -1.5) {out\_proj 1$\times$1};
+    \draw[arr] (gn.east) -- (op.west);
+
+    % ⊕ 残差
+    \node[sumnode] (sumB) at (6.5, -1.5) {$\oplus$};
+    \draw[arr] (op.east) -- (sumB.west);
+
+    % 残差跳连 X → ⊕
+    \draw[resarr] (in.east) to[out=0, in=70] node[tlabel, right] {residual} (sumB.north east);
+
+    % Output Y
+    \node[output] (outY) at (9.0, -1.5) {Output Y};
+    \draw[arr] (sumB.east) -- (outY.west);
+
+    % 标题
+    \node[font=\small\bfseries, above=4mm of in.north]
+        {DSA Module --- Internal Mechanism};
+
+    % 注释：方向全局共享
+    \node[font=\scriptsize\itshape, below=4mm of gn.south west, anchor=north west,
+          text=gray!70!black]
+        {Note: direction\_pred outputs $nh\cdot ns\cdot 2$ globally shared (per-image) directions.};
+
+\end{tikzpicture}
