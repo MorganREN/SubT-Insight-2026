@@ -8,8 +8,9 @@ class CrossMorphologyInteractionModule(nn.Module):
     """
     跨形态交互模块（CMIM）。
 
-    线型流（F_L，裂缝主导）与面型流（F_A，渗漏/剥落主导）之间的
-    双向门控交叉注意力，允许两类病害特征互为上下文。
+    线型流（F_L，裂缝主导）向面型流（F_A，渗漏/剥落主导）提供
+    单向门控交叉注意力上下文。F_L 保持原样，避免面型流反向污染
+    稀疏裂缝特征。
 
     内存优化：交叉注意力在 attn_stride 倍降采样的低分辨率上计算，
     注意力上下文上采样回原分辨率后再做门控融合。
@@ -32,12 +33,14 @@ class CrossMorphologyInteractionModule(nn.Module):
         # 降采样到低分辨率（仅用于注意力计算）
         self.pool = nn.AvgPool2d(attn_stride, attn_stride) if attn_stride > 1 else nn.Identity()
 
-        # F_L 关注 F_A（在低分辨率计算）
+        # Legacy inactive modules kept for strict checkpoint compatibility.
+        # The one-way CMIM no longer lets F_L attend to F_A.
         self.L_to_A = nn.MultiheadAttention(channels, num_heads, batch_first=True)
         # F_A 关注 F_L（在低分辨率计算）
         self.A_to_L = nn.MultiheadAttention(channels, num_heads, batch_first=True)
 
         # 门控融合在全分辨率执行
+        # gate_L/norm_L are retained but inactive for checkpoint compatibility.
         self.gate_L = nn.Sequential(nn.Linear(channels * 2, channels), nn.Sigmoid())
         self.gate_A = nn.Sequential(nn.Linear(channels * 2, channels), nn.Sigmoid())
 
@@ -52,7 +55,7 @@ class CrossMorphologyInteractionModule(nn.Module):
             F_L: [B, channels, H, W]  线型特征
             F_A: [B, channels, H, W]  面型特征
         Returns:
-            F_L_enh, F_A_enh: 增强后特征，形状不变
+            F_L_out, F_A_enh: F_L 原样返回，F_A 由 F_L 上下文增强，形状不变
         """
         B, C, H, W = F_L.shape
 
@@ -65,35 +68,24 @@ class CrossMorphologyInteractionModule(nn.Module):
         fa = FA_s.view(B, C, Hs * Ws).permute(0, 2, 1)
 
         # MultiheadAttention 在 fp16 下 Q·K^T 随特征幅值增大可超过 65504 → inf → NaN
-        # 强制 float32 计算后还原为原始 dtype（参考 DSADecoder 的同类处理）
+        # 强制 float32 计算后还原为原始 dtype（参考 DSADecoder 的同类处理）。
+        # 单向交互：仅 F_A 关注 F_L，F_L 不再被 F_A 反向改写。
         _dtype = fl.dtype
-        l_ctx_s, _ = self.L_to_A(fl.float(), fa.float(), fa.float())  # [B, HW_s, C]
-        l_ctx_s = l_ctx_s.to(_dtype)
         a_ctx_s, _ = self.A_to_L(fa.float(), fl.float(), fl.float())
         a_ctx_s = a_ctx_s.to(_dtype)
 
         # ── 将注意力上下文上采样到全分辨率 ────────────────────────────────────
-        L_ctx = l_ctx_s.permute(0, 2, 1).view(B, C, Hs, Ws)
         A_ctx = a_ctx_s.permute(0, 2, 1).view(B, C, Hs, Ws)
         if self.attn_stride > 1:
-            L_ctx = F.interpolate(L_ctx, size=(H, W), mode='bilinear', align_corners=False)
             A_ctx = F.interpolate(A_ctx, size=(H, W), mode='bilinear', align_corners=False)
 
         # ── 全分辨率门控融合（Linear 不随 HW 二次增长）────────────────────────
-        fl_full = F_L.view(B, C, H * W).permute(0, 2, 1)        # [B, HW, C]
         fa_full = F_A.view(B, C, H * W).permute(0, 2, 1)
-        l_ctx_f = L_ctx.view(B, C, H * W).permute(0, 2, 1)
         a_ctx_f = A_ctx.view(B, C, H * W).permute(0, 2, 1)
-
-        gate_l  = self.gate_L(torch.cat([fl_full, l_ctx_f], dim=-1))
-        # l_ctx_f 来自 MHA float32 输出转 fp16；若 MHA 输出幅值 > 65504，
-        # fp16 转换后变 inf，fp16 加法 inf + x = inf，LayerNorm(inf) → NaN。
-        # 显式 float32 算术确保加法不溢出，LayerNorm 已能处理 float32 输入。
-        fl_enh  = self.norm_L(fl_full.float() + gate_l.float() * l_ctx_f.float()).to(_dtype)
 
         gate_a  = self.gate_A(torch.cat([fa_full, a_ctx_f], dim=-1))
         fa_enh  = self.norm_A(fa_full.float() + gate_a.float() * a_ctx_f.float()).to(_dtype)
 
-        F_L_enh = fl_enh.permute(0, 2, 1).view(B, C, H, W)
+        F_L_out = F_L
         F_A_enh = fa_enh.permute(0, 2, 1).view(B, C, H, W)
-        return F_L_enh, F_A_enh
+        return F_L_out, F_A_enh
