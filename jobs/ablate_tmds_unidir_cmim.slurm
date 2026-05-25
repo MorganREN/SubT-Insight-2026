@@ -2,7 +2,7 @@
 #SBATCH --job-name=subt-abl-unidir-cmim
 #SBATCH --partition=gpu_cuda
 #SBATCH --qos=gpu
-#SBATCH --gres=gpu:h100:1
+#SBATCH --gres=gpu:1
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
@@ -38,12 +38,19 @@ conda activate subt-2026
 
 cd "$WORK_DIR"
 
+# On Bunya, the inherited/default srun CPU mask can fall outside the CPUs
+# assigned to this one-process GPU allocation. Keep thread usage bounded by
+# the allocation and disable the conflicting step-level affinity mask.
+unset SLURM_CPU_BIND
+export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-8}"
+
 echo "======================================================"
 echo "  Ablation    : TMDS + Unidirectional CMIM"
 echo "  SLURM Job   : $SLURM_JOB_ID"
 echo "  Node        : $SLURMD_NODENAME"
 echo "  Run name    : $RUN_NAME"
 echo "  Work dir    : $WORK_DIR"
+echo "  CPUs/task   : ${SLURM_CPUS_PER_TASK:-8}"
 echo "======================================================"
 
 OUTPUT_DIR="outputs/${RUN_NAME}"
@@ -68,7 +75,11 @@ fi
 
 echo ""
 echo ">>> [Step 1/3] 训练开始  $(date '+%Y-%m-%d %H:%M:%S')"
-srun "${TRAIN_CMD[@]}"
+srun \
+  --ntasks=1 \
+  --cpus-per-task="${SLURM_CPUS_PER_TASK:-8}" \
+  --cpu-bind=none \
+  "${TRAIN_CMD[@]}"
 
 TRAIN_RC=$?
 if [ $TRAIN_RC -ne 0 ]; then
