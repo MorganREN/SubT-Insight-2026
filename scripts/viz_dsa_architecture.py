@@ -4,16 +4,15 @@ scripts/viz_dsa_architecture.py
 DSA Decoder 架构图（论文 Method 章节用）。
 
 产出两张块图：
-  paper_figures/dsa_arch_overall.{pdf,png}   —— 整体管线（FPN + AvgPool + DSA + Upsample + Output）
-  paper_figures/dsa_arch_dsa_core.{pdf,png}  —— DSA 模块内部机制
+  paper_figures/dsa_arch_overall.{pdf,png,svg}   —— 整体管线（FPN + AvgPool + DSA + Upsample + Output）
+  paper_figures/dsa_arch_dsa_core.{pdf,png,svg}  —— DSA 模块内部机制
 
 实现：matplotlib + FancyBboxPatch（圆角块）+ FancyArrowPatch（箭头），
-不依赖 checkpoint、可一键复现。
+不依赖 checkpoint、可一键复现。SVG/PDF 可导入 Visio、PPT、Illustrator 或 Inkscape 继续编辑。
 """
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -38,7 +37,10 @@ plt.rcParams.update({
     "font.family": "DejaVu Sans",
     "pdf.fonttype": 42,   # 嵌入 TrueType，便于论文排版
     "ps.fonttype":  42,
+    "svg.fonttype": "none",  # 保留文本对象，便于 Visio / Illustrator 二次编辑
 })
+
+EXPORTS = (("pdf", None), ("png", 260), ("svg", None))
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -70,6 +72,12 @@ def arrow(ax, p0, p1, label=None, fontsize=7, style="-|>", rad=0.0, lw=1.0,
         mid = ((p0[0] + p1[0]) / 2, (p0[1] + p1[1]) / 2)
         ax.text(mid[0] + label_offset[0], mid[1] + label_offset[1],
                 label, fontsize=fontsize, color="#555")
+
+
+def save_figure(fig, name: str):
+    """保存同一张图的论文版 PDF、预览 PNG 与可编辑 SVG。"""
+    for ext, dpi in EXPORTS:
+        fig.savefig(OUT_DIR / f"{name}.{ext}", bbox_inches="tight", dpi=dpi)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -126,12 +134,14 @@ def panel_a():
     box(ax, (10.6, 1.6), 1.5, 0.7, "AvgPool ↓2\n(memory-saving)",
         color=COLORS["norm"], fontsize=8)
     arrow(ax, (sum_x + 0.4, 1.6), (9.85, 1.6))
+    ax.text(10.6, 1.0, "[B, C, H/8, W/8]", ha="center", fontsize=7.5, color="#555")
 
     # DSA Module（高亮）
-    box(ax, (12.7, 1.6), 1.5, 1.0, "DSA Module\n(strip attention)",
-        color=COLORS["dsa"], fontsize=10, lw=1.5)
+    box(ax, (12.7, 1.6), 1.8, 1.0,
+        "DSA Module\nnh=4, ns=4, M=8",
+        color=COLORS["dsa"], fontsize=9, lw=1.5)
     arrow(ax, (11.35, 1.6), (11.95, 1.6))
-    ax.text(12.7, 1.0, "[B, C, H/8, W/8]", ha="center", fontsize=7.5, color="#555")
+    ax.text(12.7, 0.9, "strip attention @ H/8", ha="center", fontsize=7.5, color="#555")
 
     # Upsample ↑2
     box(ax, (12.7, 3.2), 1.5, 0.7, "Upsample ↑2", color=COLORS["norm"])
@@ -142,16 +152,17 @@ def panel_a():
     arrow(ax, (12.7, 3.55), (12.7, 4.05))
 
     # 输出
-    box(ax, (12.7, 5.6), 1.5, 0.7, "F_L\n[B,160,H/4,W/4]",
+    box(ax, (12.7, 5.6), 1.7, 0.7, "F_L\n[B, C, H/4, W/4]",
         color=COLORS["output"], fontsize=9, lw=1.2)
     arrow(ax, (12.7, 4.75), (12.7, 5.25))
 
     ax.set_title("DSA Decoder — Overall Pipeline (FPN + Strip Attention)",
                  fontsize=12, pad=10)
+    ax.text(0.25, 0.35,
+            "FPN lateral/fpn convs run in float32; DSA is applied after AvgPool to reduce token cost.",
+            fontsize=7.5, color="#666", style="italic")
 
-    for ext, dpi in [("pdf", None), ("png", 220)]:
-        plt.savefig(OUT_DIR / f"dsa_arch_overall.{ext}",
-                    bbox_inches="tight", dpi=dpi)
+    save_figure(fig, "dsa_arch_overall")
     plt.close()
 
 
@@ -169,18 +180,18 @@ def panel_b():
 
     # 四条平行分支：direction_pred / Q / K / V
     branches = [
-        (1.5,  "direction_pred\nAvgPool → Linear",  COLORS["fpn"]),
-        (4.5,  "Q proj  1×1",                       COLORS["fpn"]),
-        (8.0,  "K proj  1×1",                       COLORS["fpn"]),
-        (11.0, "V proj  1×1",                       COLORS["fpn"]),
+        (1.5,  "direction_pred\nAvgPool → Linear",        COLORS["fpn"]),
+        (4.5,  "Q proj  1×1\n[B,C,H,W]",                  COLORS["fpn"]),
+        (8.0,  "K proj  1×1\n[B,C,H,W]",                  COLORS["fpn"]),
+        (11.0, "V proj  1×1\n[B,C,H,W]",                  COLORS["fpn"]),
     ]
     for x, label, c in branches:
         arrow(ax, (6.25, 9.1), (x, 8.55), rad=(x - 6.25) * 0.03)
         box(ax, (x, 8.2), 1.8, 0.7, label, color=c, fontsize=8)
 
-    # direction_pred 之后：reshape + ℓ2-normalize
+    # direction_pred 之后：reshape + L2 normalize
     box(ax, (1.5, 6.9), 1.8, 0.7,
-        "reshape → ℓ2-norm\nd̂ ∈ ℝ^(nh·ns·2)", color=COLORS["norm"], fontsize=7)
+        "reshape → L2-norm\nd_hat: [B, nh, ns, 2]", color=COLORS["norm"], fontsize=7)
     arrow(ax, (1.5, 7.85), (1.5, 7.25))
 
     # base grid + t·offset → sampling grid
@@ -196,6 +207,7 @@ def panel_b():
     # grid_sample (K) and grid_sample (V)
     box(ax, (7.0, 5.4), 1.8, 0.7, "grid_sample\n→ sK", color=COLORS["op"], fontsize=8)
     box(ax, (10.0, 5.4), 1.8, 0.7, "grid_sample\n→ sV", color=COLORS["op"], fontsize=8)
+    ax.text(8.5, 4.75, "sK/sV: [B, HW, ns*M, hd]", ha="center", fontsize=7.5, color="#555")
     # sg → grid_sample(K) 与 grid_sample(V)
     arrow(ax, (3.8, 5.4), (6.1, 5.4), label="sg", label_offset=(-0.05, 0.15), fontsize=7)
     arrow(ax, (3.8, 5.2), (9.1, 5.0), rad=-0.25, label="sg", fontsize=7,
@@ -209,6 +221,7 @@ def panel_b():
     box(ax, (4.8, 3.7), 2.6, 0.8,
         "Q · sK^T / √d_h\n→ softmax → attn",
         color=COLORS["op"], fontsize=9)
+    ax.text(4.8, 3.05, "attn: [B, HW, 1, ns*M]", ha="center", fontsize=7.5, color="#555")
     arrow(ax, (4.5, 7.85), (4.5, 4.15), rad=0.1, label="Q", label_offset=(-0.25, 0.1))
     arrow(ax, (6.6, 5.0), (5.4, 4.15), label="sK", label_offset=(0.05, 0.1))
 
@@ -261,12 +274,10 @@ def panel_b():
 
     # 说明：方向为全局共享（不随空间位置变化）
     ax.text(0.1, -0.4,
-            "Note: direction_pred outputs nh·ns·2 globally shared (per-image) directions.",
+            "Note: direction_pred outputs per-image global directions, not per-pixel directions. Default: nh=4, ns=4, M=8.",
             fontsize=7.5, color="#666", style="italic")
 
-    for ext, dpi in [("pdf", None), ("png", 220)]:
-        plt.savefig(OUT_DIR / f"dsa_arch_dsa_core.{ext}",
-                    bbox_inches="tight", dpi=dpi)
+    save_figure(fig, "dsa_arch_dsa_core")
     plt.close()
 
 
@@ -277,7 +288,7 @@ def main():
     panel_b()
     print("已输出：")
     for name in ("dsa_arch_overall", "dsa_arch_dsa_core"):
-        for ext in ("pdf", "png"):
+        for ext, _ in EXPORTS:
             p = OUT_DIR / f"{name}.{ext}"
             print(f"  {p} ({p.stat().st_size//1024} KB)")
 

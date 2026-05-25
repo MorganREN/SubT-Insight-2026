@@ -225,7 +225,6 @@ outputs_*/
 .codex
 .codex/
 
-# DSA viz outputs: keep TikZ source + PNG previews, exclude generated PDFs
-paper_figures/**/*.pdf
+
 # 全局 *.png 已 ignore，这里反向放行 paper_figures 下的 PNG
-!paper_figures/**/*.png
+paper_figures
